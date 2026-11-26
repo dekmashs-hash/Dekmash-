@@ -1,0 +1,472 @@
+/* =========================================================
+   category.js — ໜ້າສະແດງສິນຄ້າຕາມໝວດໝູ່ (category.html)
+   ອ່ານ ?cat=1..4 ຈາກ URL (ເລກຊ່ອງໝວດໝູ່ ຄືກັນກັບ category_1..4_name
+   ໃນການຕັ້ງຄ່າຮ້ານ) ແລ້ວດຶງສິນຄ້າຈິງຂອງໝວດນັ້ນຈາກ /api/public/storefront
+   (ຊື່/ລາຄາ/ສະຕັອກ/ຮູບ ຈິງ 100% — ບໍ່ໃຊ້ລະບົບ demo localStorage ອີກຕໍ່ໄປ)
+   ໄຟລ໌ນີ້ຄຸມທັງການສ້າງກາຕູນ ແລະ ການເຮັດວຽກ (ຄົ້ນຫາ/ປຸ່ມຊື້) ດ້ວຍຕົນເອງທັງໝົດ
+   ========================================================= */
+
+document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(window.location.search);
+  const catIndex = Number(params.get('cat')) || 1;
+
+  const titleEl = document.querySelector('#cat-title');
+  const descEl = document.querySelector('#cat-desc');
+  const breadcrumbCurrent = document.querySelector('#breadcrumbCurrent');
+  const grid = document.querySelector('#prod-grid');
+  const emptyEl = document.querySelector('#empty-state');
+  const searchBox = document.querySelector('.search-box');
+  const searchInput = document.querySelector('#search-input');
+
+  if (!grid || !window.StorefrontData) return;
+
+  // ຄ່າຮາຄາຕົວແທນ (ຖ້າມີ) — ອັບເດດຫຼັງໂຫຼດ, ຄ່າເລີ່ມຕົ້ນ = ບໍ່ແມ່ນຕົວແທນ (ໂຊວ໌ຮາຄາປົກກະຕິກ່ອນ)
+  let resellerInfo = { isReseller: false, discountPercent: 0 };
+
+  // ຄຳອະທິບາຍປະຈຳຊ່ອງ (ຄ່າສຳຮອງ) — ໃຊ້ພຽງຖ້າແອດມິນຍັງບໍ່ໄດ້ຕັ້ງຄ່າ category_{i}_desc ເອງ
+  const SLOT_DESC = {
+    1: '',
+    2: '',
+    3: '',
+    4: '',
+  };
+
+  function escapeHtml(str) {
+    return String(str || '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function showEmpty(message) {
+    // ໝາຍເຫດ: ບໍ່ເຊື່ອງ .search-box ອີກຕໍ່ໄປ (ບໍ່ວ່າຈະໂຫຼດຍັງບໍ່ສຳເລັດ ຫຼື ໝວດນີ້
+    // ຍັງບໍ່ມີສິນຄ້າ) — ໃຫ້ box + icon ຄົ້ນຫາຄົງຢູ່ໜ້າຈໍສະເໝີ ບໍ່ຫາຍ/ບໍ່ກະພິບ
+    if (grid) grid.innerHTML = '';
+    if (emptyEl) {
+      emptyEl.style.display = 'flex';
+      const p = emptyEl.querySelector('p');
+      if (p && message) p.innerHTML = message;
+    }
+  }
+
+  // ໄອຄອນທີ່ໃຊ້ໃນອນິເມຊັນ 2 ສະຖານະ: "ຢຸດຂາຍຊົ່ວຄາວ" (ແອດມິນປິດເອງ) ແລະ "ສິນຄ້າໝົດ" (ໝົດແທ້)
+  const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V19.5a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.96 17.85a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H2.5a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.15 6.99a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H8.6a1.7 1.7 0 0 0 1.04-1.56V.5a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V6.6a1.7 1.7 0 0 0 1.56 1.04h.09a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.04Z"/></svg>`;
+  const WRENCH_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L2 19l3 3 7.3-7.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2Z"/></svg>`;
+  const LOCK_SVG = `<svg class="soldout-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`;
+  // ໝາຍເຫດ: stroke ໃຊ້ currentColor (ບໍ່ hardcode #fff ອີກຕໍ່ໄປ) ເພື່ອໃຫ້ໄອຄອນປ່ຽນສີ
+  // ຕາມ .buy-btn ອັດຕະໂນມັດ — ດຳຕອນປົກກະຕິ (ພື້ນຫຼັງແດງ), ເທົາຕອນ disabled
+  const CART_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>`;
+  // ໄອຄອນເປວໄຟ ໃຊ້ໃນປ້າຍ "ຂາຍແລ້ວ" — SVG ລ້ວນ, ບໍ່ໃຊ້ emoji
+  const FLAME_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-2 4-2 7a3 3 0 0 0 6 0c2 2 3 4 3 6.5A7 7 0 1 1 8 15.5c0-2 1-3 2-4.5.5 1 1.5 1.5 2 1 1-1 0-2.5-1-4.5C10 5.5 11 3.5 12 2Z"/></svg>`;
+
+  // ສະຖານະຂອງສິນຄ້າ: 'ok' ພ້ອມຂາຍ, 'paused' ແອດມິນປິດຂາຍເອງ, 'soldout' ສິນຄ້າໝົດແທ້ໆ
+  function stockState(product, stock) {
+    if (product.paused) return 'paused';
+    if (!(stock > 0)) return 'soldout';
+    return 'ok';
+  }
+
+  function mediaHTML(product) {
+    // ບໍ່ມີຮູບສິນຄ້າ -> ໃຊ້ໂລໂກ້ຮ້ານທີ່ຕັ້ງໃນຫ້ອງແອດມິນແທນ (ຮູບໂຫຼດບໍ່ຂຶ້ນກໍ່ປ່ຽນເປັນໂລໂກ້ ເບິ່ງ storefront-data.js)
+    const logoFallback = (window.StorefrontData && window.StorefrontData.storeLogoUrl && window.StorefrontData.storeLogoUrl()) || '';
+    const imgSrc = product.image_url || logoFallback;
+    if (imgSrc) {
+      return `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(product.name)}" class="prod-img${product.image_url ? '' : ' is-logo-fallback'}" loading="lazy" decoding="async">`;
+    }
+    return `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <rect x="3" y="4" width="18" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5-9 9"/>
+      </svg>`;
+  }
+
+  // stable pseudo-random 0..-2.5s delay per product id, so cards in the same
+  // grid don't all pulse/rotate in perfect unison
+  function fxDelay(id) {
+    const str = String(id || '');
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    return -(h % 250) / 100; // 0 .. -2.5s
+  }
+
+  // ບໍລິເວນຮູບສິນຄ້າ (v5): "ພ້ອມຂາຍ" ໂຊວ໌ຮູບ/ໄອຄອນປົກກະຕິ,
+  // "ປັບປຸງ" ໂຊວ໌ໄອຄອນຟັນເຟືອງ+ປະແຈກາງກ່ອງ + ແຖບໂຫລດຄືບໜ້າ (ບໍ່ມີຮູບສິນຄ້າ),
+  // "ໝົດ" ໂຊວ໌ ໂບ hazard-tape "SOLD OUT" ພາດມຸມ + ໄອຄອນລັອກ (ນິລະໄພປິດຜະນຶກ)
+  function mediaBodyHTML(product, state, id) {
+    const d = fxDelay(id);
+    if (state === 'paused') {
+      return `
+        <div class="paused-icon">
+          <div class="gear" style="animation-delay:${d}s;">${GEAR_SVG}</div>
+          <div class="wrench" style="animation-delay:${d * 0.4}s;">${WRENCH_SVG}</div>
+        </div>
+        <div class="paused-title">ປັບປຸງ / ລໍຖ້າອັບເດດ</div>
+        <div class="paused-sub">${product.paused_note ? escapeHtml(product.paused_note) : 'ກຳລັງສ້ອມແປງ..'}</div>
+        <div class="paused-bar"><i style="animation-delay:${d}s;"></i></div>`;
+    }
+    if (state === 'soldout') {
+      return `
+        <div class="soldout-ribbon"><span>SOLD OUT</span></div>
+        <div class="soldout-wrap">
+          ${LOCK_SVG}
+          <div class="soldout-title">ໝົດແລ້ວ</div>
+          <div class="soldout-sub">ລໍຖ້າຮອບຕໍ່ໄປ</div>
+        </div>`;
+    }
+    return mediaHTML(product);
+  }
+
+  function statusHTML(product, stock, state) {
+    if (state === 'paused') {
+      return `<div class="prod-status out">ຄັງ ${stock.toLocaleString('en-US')}</div>`;
+    }
+    if (state === 'soldout') {
+      return `<div class="prod-status out">ຄັງ 0</div>`;
+    }
+    return `<div class="prod-status">ເຫຼືອ ${stock.toLocaleString('en-US')} ອັນ</div>`;
+  }
+
+  function buyLabel(state) {
+    if (state === 'paused') return 'ກຳລັງປັບປຸງ';
+    if (state === 'soldout') return 'ສິນຄ້າໝົດ';
+    return 'ຊື້ເລີຍ';
+  }
+
+  const UP_ARROW_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 11l6-6 6 6"/></svg>`;
+  const X_CIRCLE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg>`;
+
+  function buyIconHTML(state) {
+    if (state === 'paused') return UP_ARROW_SVG;
+    if (state === 'soldout') return X_CIRCLE_SVG;
+    return CART_SVG;
+  }
+
+  function priceHTML(product) {
+    const price = window.StorefrontData.productDisplayPrice(product, resellerInfo);
+    if (price === null) return `<div class="prod-price todo">₭ 0</div>`;
+    const pp = window.StorefrontData.productPromo(product, resellerInfo);
+    if (pp) return window.StorefrontData.promoPriceHTML(pp);
+    const tag = resellerInfo.isReseller ? '<span class="prod-price-reseller-tag">ຕົວແທນ</span>' : '';
+    const priceClass = resellerInfo.isReseller ? 'prod-price is-reseller-glow' : 'prod-price';
+    return `<div class="${priceClass}">${window.StorefrontData.formatKip(price)}${tag}</div>`;
+  }
+
+  // ຫາສິນຄ້າທີ່ "ຂາຍດີສຸດ" ໃນລາຍການທີ່ກຳລັງໂຊວ໌ (soldCount ສູງສຸດ ແລະ ຕ້ອງ > 0 ຈຶ່ງຈະຕິດປ້າຍ) —
+  // ຄິດແຍກຕໍ່ໜ້າ/ຕໍ່ໝວດ ບໍ່ແມ່ນຕາຍຕົວທັງຮ້ານ, ຖ້າຂາຍທຽບກັນ 0 ໝົດຈະບໍ່ມີໃຜຕິດຕາປັ໊ມ
+  function findTopSellerId(products) {
+    let topId = null;
+    let topCount = 0;
+    products.forEach((p) => {
+      const c = Number(p.soldCount) || 0;
+      if (c > topCount) { topCount = c; topId = p.id; }
+    });
+    return topId;
+  }
+
+  function soldTagHTML(product) {
+    const count = Number(product.soldCount) || 0;
+    if (count <= 0) return '';
+    return `<div class="prod-sold-tag">${FLAME_SVG}ຂາຍແລ້ວ ${count.toLocaleString('en-US')} ອັນ</div>`;
+  }
+
+  // ---------- ປັກໝຸດສິນຄ້າ (ຫົວໃຈ) — ເກັບໃນເຄື່ອງລູກຄ້າເອງ (localStorage), ໃໝ່ສຸດຢູ່ໜ້າສຸດ ----------
+  const FAV_KEY = 'fav_products_v1';
+  const HEART_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+  function loadFavs() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(FAV_KEY) || '[]');
+      return Array.isArray(arr) ? arr.map(String) : [];
+    } catch (e) { return []; }
+  }
+  function saveFavs(arr) {
+    try { localStorage.setItem(FAV_KEY, JSON.stringify(arr.slice(0, 200))); } catch (e) { /* ເກັບບໍ່ໄດ້ກໍປ່ອຍຜ່ານ */ }
+  }
+  let favs = loadFavs();
+
+  // ສິນຄ້າທີ່ລູກຄ້າຄົນນີ້ "ຊື້ເກີນ 2 ຄັ້ງ" (ຄືຊື້ 3 ຄັ້ງຂຶ້ນໄປ) = ສິນຄ້າທີ່ແນະນຳ -> ຈຶ່ງມີຫົວໃຈໃຫ້ຕິກປັກໝຸດ
+  // ນັບຈາກປະຫວັດການສັ່ງຊື້ຈິງ (GET /api/orders/history) ຖ້າຍັງບໍ່ໄດ້ login ຫຼືດຶງບໍ່ໄດ້ = ບໍ່ມີປ້າຍ/ຫົວໃຈ
+  const REC_MIN_BUYS = 3;
+  const BATCH_WINDOW_MS = 90 * 1000; // ຊື້ຫຼາຍຈຳນວນໃນການກົດ "ຊື້ເລີຍ" ຄັ້ງດຽວ (ຫຼາຍແຖວໃກ້ກັນ) ນັບເປັນ 1 ຄັ້ງ — ຄືກັນກັບໜ້າ orders.js
+  let recNames = new Set();
+  const isRec = (p) => recNames.has(String(p.name || ''));
+  async function fetchRecommendedNames() {
+    try {
+      const res = await fetch('/api/orders/history', { cache: 'no-store' });
+      if (!res.ok) return new Set();
+      const data = await res.json().catch(() => ({}));
+      if (!data || !data.ok) return new Set();
+      const count = {};
+      const lastAt = {};
+      (data.items || []).forEach((r) => {
+        if (r.status && r.status !== 'completed') return;
+        const name = String(r.product_name || '');
+        if (!name) return;
+        const t = new Date(r.created_at).getTime();
+        if (!(name in lastAt) || Math.abs(lastAt[name] - t) > BATCH_WINDOW_MS) count[name] = (count[name] || 0) + 1;
+        lastAt[name] = t;
+      });
+      return new Set(Object.keys(count).filter((n) => count[n] >= REC_MIN_BUYS));
+    } catch (e) { return new Set(); }
+  }
+  const isFav = (id) => favs.includes(String(id));
+  function toggleFav(id) {
+    id = String(id);
+    favs = isFav(id) ? favs.filter((x) => x !== id) : [id, ...favs];
+    saveFavs(favs);
+    return isFav(id);
+  }
+  // ---------- ປັບສີພື້ນການ໌ດໃຫ້ເຂົ້າກັບຮູບສິນຄ້າອັດຕະໂນມັດ ----------
+  // ສຸ່ມສີເສັ້ນລຸ່ມຂອງຮູບ (canvas) -> ເຮັດໃຫ້ມືດລົງພໍດີ -> ໃສ່ເປັນພື້ນການ໌ດ ຮູບຈຶ່ງຄ່ອຍໆຈາງເຂົ້າພື້ນສີດຽວກັນ
+  // ຖ້າເຊີບເວີຮູບບໍ່ອະນຸຍາດ CORS ຈະອ່ານສີບໍ່ໄດ້ -> ປ່ອຍພື້ນດຳເດີມ (ບໍ່ກະທົບການສະແດງຮູບ)
+  const tintCache = new Map();
+  function sampleEdgeColor(url) {
+    if (tintCache.has(url)) return tintCache.get(url);
+    const p = new Promise((resolve) => {
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = () => {
+        try {
+          const w = im.naturalWidth, h = im.naturalHeight;
+          if (!w || !h) return resolve(null);
+          const c = document.createElement('canvas');
+          c.width = 24; c.height = 6;
+          const ctx = c.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(im, 0, Math.floor(h * 0.82), w, Math.max(1, Math.floor(h * 0.18)), 0, 0, 24, 6);
+          const d = ctx.getImageData(0, 0, 24, 6).data;
+          let r = 0, g = 0, b = 0, n = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 40) continue;
+            r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+          }
+          if (!n) return resolve(null);
+          resolve([r / n, g / n, b / n]);
+        } catch (e) { resolve(null); }
+      };
+      im.onerror = () => resolve(null);
+      im.src = url;
+    });
+    tintCache.set(url, p);
+    return p;
+  }
+  function tintCards(root) {
+    root.querySelectorAll('.prod-card[data-pid] img.prod-img').forEach((img) => {
+      const card = img.closest('.prod-card');
+      const url = img.getAttribute('src');
+      if (!card || !url) return;
+      sampleEdgeColor(url).then((rgb) => {
+        if (!rgb) return;
+        // ຮັກສາໂທນມືດ ໃຫ້ຕົວໜັງສືຂາວອ່ານງ່າຍ: ຈຳກັດຄວາມສະຫວ່າງສູງສຸດ ~72
+        const mx = Math.max(rgb[0], rgb[1], rgb[2]) || 1;
+        const k = Math.min(1, 72 / mx);
+        const top = rgb.map((v) => Math.round(v * k));
+        const bot = top.map((v) => Math.round(v * 0.55));
+        card.style.setProperty('--pc-bg', `linear-gradient(180deg, rgb(${top.join(',')}) 0%, rgb(${top.join(',')}) 45%, rgb(${bot.join(',')}) 100%)`);
+        card.style.setProperty('--pc-bd', `rgba(${Math.min(255, top[0] * 2 + 20)},${Math.min(255, top[1] * 2 + 20)},${Math.min(255, top[2] * 2 + 20)},.28)`);
+      });
+    });
+  }
+
+  // ສິນຄ້າທີ່ປັກໝຸດຂຶ້ນກ່ອນ (ອັນທີ່ກົດຫຼ້າສຸດຢູ່ເທິງສຸດ) ແລ້ວຕາມດ້ວຍສິນຄ້າທີ່ເຫຼືອຕາມລຳດັບເດີມ
+  // ແອດມິນປັກໝຸດ (ຕິກຫົວໃຈໃນຫ້ອງແອດມິນ) ຂຶ້ນເທິງສຸດກ່ອນທຸກຢ່າງ — ລຳດັບຕາມທີ່ server ສົ່ງມາ (ໃໝ່ສຸດກ່ອນ)
+  const isAdminPinned = (p) => !!p.featured;
+  const isPinned = (p) => isAdminPinned(p) || (isFav(p.id) && isRec(p));
+  function orderByFavs(products) {
+    const adminPinned = products.filter(isAdminPinned);
+    const pinned = favs.map((id) => products.find((p) => String(p.id) === id)).filter((p) => p && isRec(p) && !isAdminPinned(p));
+    // ສິນຄ້າທີ່ເຫຼືອ: ຂາຍດີ (soldCount ຫຼາຍ) ຢູ່ເທິງສຸດ -> ຖ້າຂາຍເທົ່າກັນ ໃຫ້ສິນຄ້າທີ່ມີສະຕັອກຫຼາຍກວ່າມາກ່ອນ -> ຖ້າຍັງເທົ່າກັນ ຮັກສາລຳດັບເດີມ
+    const rest = products
+      .map((p, i) => ({ p, i }))
+      .filter((x) => !isPinned(x.p))
+      .sort((a, b) => {
+        const sa = Number(a.p.soldCount) || 0;
+        const sb = Number(b.p.soldCount) || 0;
+        if (sb !== sa) return sb - sa;
+        const ka = window.StorefrontData.productTotalStock(a.p);
+        const kb = window.StorefrontData.productTotalStock(b.p);
+        if (kb !== ka) return kb - ka;
+        return a.i - b.i;
+      })
+      .map((x) => x.p);
+    return [...adminPinned, ...pinned, ...rest];
+  }
+  // ປ້າຍ "ສິນຄ້າທີ່ແນະນຳ" + ຫົວໃຈ — ສະແດງສະເພາະສິນຄ້າທີ່ຊື້ເກີນ 2 ຄັ້ງ
+  function favBtnHTML(product) {
+    if (isAdminPinned(product)) return `<div class="admin-pin-badge" aria-label="ສິນຄ້າປັກໝຸດ">${HEART_SVG}<span>ແນະນຳ</span></div>`;
+    if (!isRec(product)) return '';
+    const on = isFav(product.id);
+    return `<button type="button" class="fav-btn${on ? ' is-on' : ''}" data-fav="${escapeHtml(product.id)}" aria-pressed="${on}" aria-label="ສິນຄ້າທີ່ແນະນຳ — ປັກໝຸດ">${HEART_SVG}<span>ສິນຄ້າທີ່ແນະນຳ</span></button>`;
+  }
+
+  function cardHTML(product, topSellerId) {
+    const stock = window.StorefrontData.productTotalStock(product);
+    const buyable = window.StorefrontData.isProductBuyable(product);
+    const state = stockState(product, stock);
+    const mediaClass = state === 'ok' ? 'prod-media' : `prod-media is-${state}`;
+    const isTopSeller = topSellerId && product.id === topSellerId;
+    const cardClass = [
+      'prod-card', 'grid-card',
+      resellerInfo.isReseller ? 'is-reseller' : '',
+      isTopSeller ? 'is-top-seller wb-pc' : '', // wb-pc = ใช้สไตล์ป้าย HOT คร่อมมุมการ์ดเหมือน "สินค้าขายดีประจำสัปดาห์"
+      isPinned(product) ? 'is-fav' : '',
+    ].filter(Boolean).join(' ');
+    const stampHTML = isTopSeller ? `<div class="prod-stamp is-hot"><svg class="hot-badge" viewBox="0 0 124 64" role="img" aria-label="HOT" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="hbG" x1="0" y1="0" x2="0.9" y2="1"><stop offset="0" stop-color="#ffb23a"/><stop offset=".55" stop-color="#ff6a12"/><stop offset="1" stop-color="#e83a00"/></linearGradient><linearGradient id="hbT" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff5a0a"/><stop offset=".6" stop-color="#ff9a1f"/><stop offset="1" stop-color="#ffd24a"/></linearGradient><linearGradient id="hbH" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs><g class="hb-flames" fill="url(#hbT)" stroke="#a82600" stroke-width="1.4" stroke-linejoin="round"><path class="hb-t hb-t1" d="M76 18C88 18 96 12 100 2C106 10 104 20 96 26C90 30 84 30 76 30Z"/><path class="hb-t hb-t2" d="M76 26C92 24 104 20 114 14C114 24 110 30 102 34C94 38 86 38 76 38Z"/><path class="hb-t hb-t3" d="M76 34C92 34 106 36 118 42C108 46 100 48 90 49C84 50 80 50 76 50Z"/><path class="hb-t hb-t4" d="M76 42C88 46 96 52 100 62C92 60 86 58 76 54Z"/></g><path d="M8 34C8 22 20 15 36 15H62C80 15 88 22 88 34C88 46 80 53 62 53H36C20 53 8 46 8 34Z" fill="url(#hbG)" stroke="#a82600" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 30C16 21 26 18 40 18H62C50 22 30 22 14 30Z" fill="url(#hbH)"/><text x="48" y="42" text-anchor="middle" font-family="'Lilita One','Arial Black',Impact,sans-serif" font-weight="900" font-style="italic" font-size="27" fill="#3a0d00" fill-opacity=".55" transform="translate(2 2) skewX(-8)">HOT</text><text x="48" y="42" text-anchor="middle" font-family="'Lilita One','Arial Black',Impact,sans-serif" font-weight="900" font-style="italic" font-size="27" fill="#fff" stroke="#fff" stroke-width=".6" transform="skewX(-8)">HOT</text></svg></div>` : '';
+    return `
+      <article class="${cardClass}" data-pid="${escapeHtml(product.id)}">
+        ${favBtnHTML(product)}
+        ${stampHTML}
+        ${window.StorefrontData.promoBadgeHTML(window.StorefrontData.productPromo(product, resellerInfo))}
+        <div class="${mediaClass}">
+          ${mediaBodyHTML(product, state, product.id)}
+        </div>
+        <div class="prod-body">
+ <div class="prod-name" title="${escapeHtml(product.name || '')}">${escapeHtml(product.name || 'ໃສ່ຊື່ສິນຄ້າ')}</div>
+ <div class="prod-row">${priceHTML(product)}${statusHTML(product, stock, state)}</div>
+ <button type="button" class="buy-btn" ${buyable ? '' : 'disabled'}>
+ ${buyIconHTML(state)}
+ ${buyLabel(state)}
+ </button>
+ ${soldTagHTML(product)}
+ </div>
+ </article>`;
+  }
+
+  // ກົດ "ຊື້ເລີຍ" -> ໄປໜ້າ product.html ເພື່ອເລືອກໄລຍະເວລາ/ຈຳນວນ ແລະ ຢືນຢັນສັ່ງຊື້ຢູ່ນັ້ນ
+  // (ການສັ່ງຊື້ຈິງ + POST /api/orders/create ຄຸມຢູ່ product.js ແທນ)
+  function wireBuyButtons(products) {
+    grid.querySelectorAll('.prod-card[data-pid] .buy-btn:not([disabled])').forEach((btn) => {
+      const card = btn.closest('.prod-card[data-pid]');
+      const pid = card ? card.dataset.pid : null;
+      btn.addEventListener('click', () => {
+        window.location.href = `product.html?pid=${encodeURIComponent(pid)}&cat=${encodeURIComponent(catIndex)}`;
+      });
+    });
+  }
+
+  function wireSearch(allProducts) {
+    if (!searchInput) return;
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.trim().toLowerCase();
+      let visibleCount = 0;
+      grid.querySelectorAll('.prod-card').forEach((card) => {
+        const name = card.querySelector('.prod-name')?.textContent.toLowerCase() || '';
+        const match = name.includes(q);
+        card.style.display = match ? '' : 'none';
+        if (match) visibleCount++;
+      });
+      if (emptyEl) {
+        if (visibleCount === 0 && allProducts.length > 0) {
+          emptyEl.style.display = 'flex';
+          const p = emptyEl.querySelector('p');
+          if (p) p.innerHTML = 'ບໍ່ພົບສິນຄ້າທີ່ຄົ້ນຫາ<br>ລອງຄຳອື່ນ';
+        } else {
+          emptyEl.style.display = 'none';
+        }
+      }
+    });
+  }
+
+  window.StorefrontData.fetchData()
+    .then((data) => {
+      const category = window.StorefrontData.categoryByIndex(data, catIndex)
+        || { index: catIndex, name: `ໝວດໝູ່ ${catIndex}` };
+
+      const { name } = window.StorefrontData.applyStoreBranding(data.store);
+      if (titleEl) { titleEl.textContent = category.name; titleEl.classList.remove('is-loading'); }
+      if (breadcrumbCurrent) breadcrumbCurrent.textContent = category.name;
+      if (descEl) {
+        descEl.textContent = (category.desc && String(category.desc).trim()) || SLOT_DESC[catIndex] || '';
+        descEl.classList.remove('is-loading');
+      }
+      document.title = `${category.name} — ${name}`;
+
+      const products = window.StorefrontData.productsByCategoryName(data, category.name);
+
+      // ---- Hero (รูปปก+ชื่อหมวด+จำนวนรายการ) และแถบหมวดหมู่ ----
+      (function () {
+        const hTitle = document.querySelector('#hero-title');
+        const hCount = document.querySelector('#hero-count');
+        const hImg = document.querySelector('#hero-img');
+        const chips = document.querySelector('#cat-chips');
+        if (hTitle) hTitle.textContent = category.name;
+        if (hCount) hCount.textContent = products.length + ' ລາຍການ';
+        const heroSrc = category.image; // รูปปกของหมวดนั้น (ตั้งในห้องแอดมิน) — ไม่มีรูป = ใช้ลายแดงดำแทน
+        if (hImg && heroSrc) { hImg.src = heroSrc; hImg.hidden = false; }
+        if (!chips) return;
+        const cats = (data.categories || []).filter((c) => c && c.name);
+        const all = (data.products || []).length;
+        chips.innerHTML = `<a class="cat-chip" href="index.html#categories">ທັງໝົດ (${all})</a>` + cats.map((c) => {
+          const n = window.StorefrontData.productsByCategoryName(data, c.name).length;
+          const on = c.index === catIndex;
+          return `<a class="cat-chip${on ? ' on' : ''}" href="category.html?cat=${encodeURIComponent(c.index)}"${on ? ' aria-current="page"' : ''}>${escapeHtml(c.name)} (${n})</a>`;
+        }).join('');
+        const active = chips.querySelector('.cat-chip.on');
+        if (active) chips.scrollLeft = Math.max(0, active.offsetLeft - (chips.clientWidth - active.offsetWidth) / 2);
+      })();
+
+      if (!products.length) {
+        showEmpty('ຍັງບໍ່ມີສິນຄ້າໃນໝວດນີ້<br>ກະລຸນາກັບມາເບິ່ງພາຍຫຼັງ');
+        return;
+      }
+
+      const topSellerId = findTopSellerId(products);
+
+      // ສ້າງກຣິດໃໝ່ (ສິນຄ້າປັກໝຸດຂຶ້ນກ່ອນ) + ຄົງຄ່າຄົ້ນຫາທີ່ພິມຄ້າງໄວ້
+      const recHead = document.querySelector('#rec-head');
+      function renderGrid() {
+        if (recHead) recHead.style.display = products.some(isPinned) ? '' : 'none';
+        grid.innerHTML = orderByFavs(products).map((p) => cardHTML(p, topSellerId)).join('');
+        if (emptyEl) emptyEl.style.display = 'none';
+        wireBuyButtons(products);
+        tintCards(grid);
+        if (searchInput && searchInput.value.trim()) searchInput.dispatchEvent(new Event('input'));
+      }
+      renderGrid();
+      wireSearch(products);
+
+      // ດຶງປະຫວັດການຊື້ມາຫາສິນຄ້າທີ່ຊື້ເກີນ 2 ຄັ້ງ ແລ້ວວາດໃໝ່ (ບໍ່ບລັອກການສະແດງສິນຄ້າຄັ້ງທຳອິດ)
+      fetchRecommendedNames().then((names) => {
+        if (!names.size) return;
+        recNames = names;
+        renderGrid();
+      });
+
+      // ກົດຫົວໃຈ -> ສິນຄ້າເລື່ອນຂຶ້ນເທິງສຸດ (ກົດອີກຄັ້ງ = ຍົກເລີກປັກໝຸດ)
+      grid.addEventListener('click', (e) => {
+        const btn = e.target.closest('.fav-btn');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const before = {};
+        grid.querySelectorAll('.prod-card[data-pid]').forEach((c) => { before[c.dataset.pid] = c.getBoundingClientRect(); });
+        const nowOn = toggleFav(btn.dataset.fav);
+        renderGrid();
+        const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          || document.documentElement.classList.contains('perf-lite');
+        if (!calm) {
+          grid.querySelectorAll('.prod-card[data-pid]').forEach((c) => {
+            const b = before[c.dataset.pid];
+            if (!b || !c.animate) return;
+            const a = c.getBoundingClientRect();
+            const dx = b.left - a.left, dy = b.top - a.top;
+            if (!dx && !dy) return;
+            c.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+              { duration: 420, easing: 'cubic-bezier(.22,1,.36,1)' });
+          });
+        }
+        if (nowOn) {
+          const head = document.querySelector('#rec-head');
+          if (head && head.getBoundingClientRect().top < 0) head.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+        }
+      });
+
+      // ---- ຍິງເຊັກລາຄາຕົວແທນຕໍ່ (ບໍ່ບລັອກການເຣນເດີຄັ້ງທຳອິດ) ຖ້າເປັນຕົວແທນຄ່ອຍເຣນເດີການ໌ດໃໝ່ ----
+      window.StorefrontData.fetchResellerInfo().then((info) => {
+        if (!info.isReseller) return;
+        resellerInfo = info;
+        renderGrid();
+      });
+    })
+    .catch(() => {
+      if (titleEl) { titleEl.textContent = 'ໝວດໝູ່ສິນຄ້າ'; titleEl.classList.remove('is-loading'); }
+      if (descEl) descEl.classList.remove('is-loading');
+      showEmpty('ດຶງຂໍ້ມູນສິນຄ້າບໍ່ສຳເລັດ<br>ກະລຸນາໂຫຼດໜ້ານີ້ໃໝ່ພາຍຫຼັງ');
+    });
+});

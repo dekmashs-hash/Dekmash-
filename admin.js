@@ -1,0 +1,4181 @@
+/* ---------- helper: บีบรูปที่ใหญ่เกินก่อนอัปโหลด ----------
+   Netlify Functions รับ request ได้ไม่เกิน ~6MB (รูปที่ส่งแบบไฟล์จะกินราว 4.5MB จริง)
+   รูปจากมือถือมักใหญ่กว่านั้น จึงย่อ/บีบใน browser ก่อนส่งเสมอถ้าไฟล์ใหญ่เกิน 3.5MB
+   ถ้าบีบไม่สำเร็จด้วยเหตุใดก็ตาม จะส่งไฟล์เดิมไปตามปกติ (ไม่ทำให้ flow เดิมพัง) */
+async function compressImageIfLarge(file, maxBytes) {
+  const LIMIT = maxBytes || 3.5 * 1024 * 1024;
+  try {
+    if (!file || !file.type || !/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
+    if (file.size <= LIMIT) return file;
+
+    const bitmapUrl = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = bitmapUrl;
+    });
+    URL.revokeObjectURL(bitmapUrl);
+
+    const isPng = file.type === 'image/png';
+    let maxDim = 2000;
+    let quality = 0.85;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // PNG อาจโปร่งใส -> ลอง webp ก่อน (รองรับ alpha) ที่เหลือใช้ jpeg
+      const wantType = isPng ? 'image/webp' : 'image/jpeg';
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, wantType, quality));
+      if (blob && blob.type === wantType && blob.size > 0 && blob.size <= LIMIT) {
+        const ext = wantType === 'image/webp' ? 'webp' : 'jpg';
+        const base = (file.name || 'image').replace(/\.[^.]+$/, '');
+        return new File([blob], `${base}.${ext}`, { type: wantType });
+      }
+      maxDim = Math.round(maxDim * 0.75);
+      quality = Math.max(0.6, quality - 0.05);
+    }
+  } catch (err) {
+    console.warn('compressImageIfLarge: บีบรูปไม่สำเร็จ ใช้ไฟล์เดิม', err);
+  }
+  return file;
+}
+
+/* =========================================================
+   admin.js — ຫ້ອງແອດມິນ DEK MASH SHOP
+   ນຳລະບົບຟັງຊັນ+UI ຈາກເວັບເກົ່າ (beertj-store) ມາໃຊ້ຢູ່ນີ້:
+     - ຕໍ່ Supabase ໂປຣເຈັກເດີມ (admin-supabase-config.js) ແບບເຕັມຮູບແບບ
+       (ຈັດການສິນຄ້າ, ໄລຍະເວລາ, ລິ້ງດາວໂຫຼດ, ເຕີມລະຫັດ, ຄຳຂໍເຕີມເງິນ, ຕັ້ງຄ່າຮ້ານ)
+     - ການລ໋ອກອິນ/ກວດສິດແອດມິນ ຍັງໃຊ້ລະບົບ Discord OAuth ຂອງເວັບໃໝ່ (worker/src/index.js)
+       ແທນລະບົບ Supabase-Auth ຂອງເວັບເກົ່າ
+
+   ໝາຍເຫດ: ໜ້ານີ້ (ຫ້ອງແອດມິນ) ຕໍ່ Supabase ຈິງແລ້ວ ແຕ່ໜ້າຮ້ານລູກຄ້າ (index.html ອື່ນໆ)
+   ຍັງບໍ່ໄດ້ຕໍ່ນຳ (ຍັງໃຊ້ localStorage ເໝືອນເກົ່າ) — ຈະຕໍ່ໃຫ້ໃນຂັ້ນຕໍ່ໄປ
+   ========================================================= */
+
+// ============================================
+// ແກ້ບັກ: ກ່ອງຕັ້ງຄ່າ (.switch-body) ເລື່ອນລົງບໍ່ສຸດ/ເນື້ອຫາຖືກຕັດ
+// ສາເຫດເດີມ: .switch.open .switch-body ໃຊ້ max-height ຄົງທີ່ 4000px (CSS) ເປັນຕົວກຳນົດ
+// ຄວາມສູງສຸດ ຮ່ວມກັບ overflow:hidden — ພໍເນື້ອຫາຈິງ (ເຊັ່ນ ໜ້າ "ຕັ້ງຄ່າຮ້ານ" ທີ່ມີ 4
+// ໝວດໝູ່ ແຕ່ລະໝວດມີຫຼາຍຊ່ອງກອກ+ຮູບ) ສູງກວ່າ 4000px ເນື້ອຫາສ່ວນທີ່ເກີນມາຈະຖືກ overflow:hidden
+// ຕັດຖິ້ມໄປເລີຍ ເຮັດໃຫ້ເລື່ອນຈໍລົງແນວໃດກໍ່ບໍ່ເຫັນສ່ວນທ້າຍ (ປຸ່ມ "ຢືນຢັນ" ອັນສຸດທ້າຍຄ້າງຄາ)
+// ວິທີແກ້: ຄຳນວນ max-height ຈິງຈາກ scrollHeight ຂອງເນື້ອຫາດ້ວຍ JS ທຸກຄັ້ງທີ່ເປີດ/ເນື້ອຫາປ່ຽນ
+// ຂະໜາດ (ອັບໂຫລດຮູບ, ຂໍ້ຄວາມ error ໂຜ່) ແທນທີ່ຈະອີງຄ່າຄົງທີ່ຈາກ CSS ຢ່າງດຽວ
+// ============================================
+// ຄວາມປອດໄພ: escape ຄ່າທີ່ມາຈາກລູກຄ້າ (email/username/ຂໍ້ຄວາມອື່ນໆ) ກ່ອນໃສ່ໃນ innerHTML
+// ເພື່ອກັນ stored XSS — ຄ່າພວກນີ້ລູກຄ້າເປັນຄົນກອກເອງຕອນສະໝັກ/ນຳໃຊ້ເວັບ (ບໍ່ແມ່ນ trusted input)
+// ແລ້ວຫ້ອງແອດມິນ (session ສິດສູງ ເຂົ້າເຖິງ Supabase ໄດ້ໝົດ) ເປັນຄົນ render ຄືນ ຖ້າບໍ່ escape
+// ລູກຄ້າ 1 ຄົນສາມາດຝັງ <script>/onerror= ໄວ້ໃນອີເມວແລ້ວມັນຈະຮັນໃນ browser ຂອງແອດມິນທັນທີ
+function escapeHtmlAdmin(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function syncSwitchHeight(sw) {
+  if (!sw) return;
+  const body = sw.querySelector('.switch-body');
+  const inner = sw.querySelector('.switch-body-inner');
+  if (!body || !inner) return;
+  if (sw.classList.contains('open')) {
+    // +40px ກັນຂອບ/margin ຄາດເຄື່ອນເລັກນ້ອຍລະຫວ່າງບຣາວເຊີ
+    body.style.maxHeight = (inner.scrollHeight + 40) + 'px';
+  } else {
+    body.style.maxHeight = '0px';
+  }
+}
+
+function syncAllSwitchHeights() {
+  document.querySelectorAll('.switch[data-target]').forEach(syncSwitchHeight);
+}
+
+// ຄອຍເບິ່ງທຸກ .switch-body-inner: ຖ້າຂະໜາດເນື້ອຫາຂ້າງໃນປ່ຽນ (ອັບໂຫລດຮູບ, ຂໍ້ຄວາມ error
+// ໂຜ່ຂຶ້ນ, ເພີ່ມ/ລຶບຊ່ອງກອກ ດ້ວຍ JS) ໃຫ້ຄຳນວນ max-height ໃໝ່ທັນທີ ຖ້າກ່ອງນັ້ນກຳລັງເປີດຢູ່
+function initSwitchHeightObserver() {
+  if (!window.ResizeObserver) return;
+  document.querySelectorAll('.switch[data-target]').forEach((sw) => {
+    const inner = sw.querySelector('.switch-body-inner');
+    if (!inner || sw.dataset.roBound) return;
+    sw.dataset.roBound = '1';
+    const ro = new ResizeObserver(() => {
+      if (sw.classList.contains('open')) syncSwitchHeight(sw);
+    });
+    ro.observe(inner);
+  });
+}
+
+// ============================================
+// ພາກ 1: ການກວດສິດແອດມິນ (ແອດມິນລ໋ອກອິນດ້ວຍອີເມວ+ລະຫັດຜ່ານ, ສິດມາຈາກຕາຕະລາງ admin_accounts)
+// ============================================
+function logout() {
+  window.location.href = '/auth/logout';
+}
+
+async function checkAuthAndInit() {
+  let res;
+  try {
+    res = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
+  } catch (e) {
+    showLoginScreen('ຕິດຕໍ່ເຊີບເວີບໍ່ໄດ້ — ລອງໃໝ່ພາຍຫຼັງ');
+    return;
+  }
+  const data = await res.json();
+
+  if (!data.loggedIn) {
+    showLoginScreen();
+    return;
+  }
+  if (!data.user || !data.user.isAdmin) {
+    showDeniedScreen();
+    return;
+  }
+
+  currentAdminUser = data.user;
+  showAdminApp();
+}
+
+function showLoginScreen(errorMsg) {
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('deniedScreen').style.display = 'none';
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('adminApp').style.display = 'none';
+  const err = document.getElementById('loginError');
+  if (err) err.textContent = errorMsg || '';
+}
+
+function showDeniedScreen() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('deniedScreen').style.display = 'flex';
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('adminApp').style.display = 'none';
+}
+
+async function showAdminApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('deniedScreen').style.display = 'none';
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('adminApp').style.display = 'block';
+  await initAdminPanel();
+}
+
+// ============================================
+// ພາກ 2: ຟັງຊັນຫ້ອງແອດມິນ (ພອດມາຈາກເວັບເກົ່າ — ຕໍ່ Supabase ໂປຣເຈັກເດີມ)
+// ============================================
+// ============================================
+// ໜ້າຄວບຄຸມແອດມິນ — ເພີ່ມ/ແກ້ໄຂສິນຄ້າ, ເຕີມລະຫັດ ແລະ ຄຳຂໍເຕີມເງິນ
+// ============================================
+
+let currentProducts = [];
+let currentAdminUser = null;
+let selectedImageFile = null;
+let currentSiteSettings = {};
+let selectedLogoFile = null;
+let selectedQrFile = null;
+let selectedQrFile2 = null;
+let selectedQrFile3 = null;
+let selectedQrFile4 = null;
+const selectedQrIconFiles = {};
+
+// ຕົວເລືອກໄລຍະເວລາທີ່ໃຫ້ເລືອກຕອນສ້າງສິນຄ້າ
+const DURATION_OPTIONS = ['12ຊມ', '1ວັນ', '2ວັນ', '3ວັນ', '4ວັນ', '5ວັນ', '6ວັນ', '7ວັນ', '10ວັນ', '20ວັນ', '30ວັນ'];
+
+function setMsg(el, text, kind) {
+  el.classList.remove('show', 'error', 'success', 'pending');
+  if (!text) return;
+  el.textContent = text;
+  el.classList.add('show', kind);
+}
+
+// ---------- ກວດ QR ທີ່ອັບໂຫຼດ: ໃຊ້ຝັງຍອດເງິນອັດຕະໂນມັດໄດ້ບໍ ----------
+function qrCrc16(str) {
+  let c = 0xffff;
+  for (let i = 0; i < str.length; i++) {
+    c ^= str.charCodeAt(i) << 8;
+    for (let b = 0; b < 8; b++) c = c & 0x8000 ? ((c << 1) ^ 0x1021) & 0xffff : (c << 1) & 0xffff;
+  }
+  return c.toString(16).toUpperCase().padStart(4, '0');
+}
+function qrEmvParse(s) {
+  const out = [];
+  let i = 0;
+  while (i + 4 <= s.length) {
+    const len = parseInt(s.slice(i + 2, i + 4), 10);
+    if (!Number.isFinite(len) || i + 4 + len > s.length) return null;
+    out.push([s.slice(i, i + 2), s.slice(i + 4, i + 4 + len)]);
+    i += 4 + len;
+  }
+  return i === s.length ? out : null;
+}
+async function qrDecodeBlob(blob) {
+  if (!window.createImageBitmap || !window.jsQR) return '';
+  const bmp = await createImageBitmap(blob);
+  const W = bmp.width, H = bmp.height;
+  const regions = [[0, 0, W, H], [0, H * 0.5, W, H * 0.5], [W * 0.45, H * 0.55, W * 0.55, H * 0.45]];
+  for (const [sx, sy, sw, sh] of regions) {
+    for (const maxSide of [1400, 2200, 900]) {
+      const k = Math.min(maxSide / Math.max(sw, sh), 3);
+      const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, w, h);
+      const r = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'attemptBoth' });
+      if (r && r.data) return r.data;
+    }
+  }
+  return '';
+}
+const qrCheckedKey = {};
+async function checkQrSupport(slot, source) {
+  const el = document.getElementById('qrStatus' + slot);
+  if (!el || !source) return;
+  const key = typeof source === 'string' ? source : source.name + source.size + source.lastModified;
+  if (qrCheckedKey[slot] === key) return;
+  qrCheckedKey[slot] = key;
+  setMsg(el, 'ກຳລັງກວດ QR...', 'pending');
+  try {
+    const blob = typeof source === 'string' ? await (await fetch(source)).blob() : source;
+    const text = await qrDecodeBlob(blob);
+    if (!text) { setMsg(el, '⚠️ ອ່ານ QR ໃນຮູບບໍ່ໄດ້ — ໜ້າເຕີມເງິນຈະສະແດງຮູບນີ້ຕາມເດີມ (ລູກຄ້າຕ້ອງໃສ່ຍອດເອງ). ລອງໃຊ້ຮູບ QR ທີ່ຊັດເຈນ ຕັດພຽງ QR', 'error'); return; }
+    const tags = qrEmvParse(text);
+    const last = tags && tags[tags.length - 1];
+    if (!tags || tags.length < 4 || !last || last[0] !== '63' || qrCrc16(text.slice(0, -4)) !== String(last[1]).toUpperCase()) {
+      setMsg(el, '⚠️ ອ່ານ QR ໄດ້ ແຕ່ບໍ່ແມ່ນຮູບແບບ QR ທະນາຄານມາດຕະຖານ — ຈະສະແດງຮູບເດີມ (ລູກຄ້າໃສ່ຍອດເອງ)', 'error'); return;
+    }
+    const t01 = tags.find((t) => t[0] === '01');
+    if (tags.some((t) => t[0] === '54')) { setMsg(el, '⚠️ QR ນີ້ມີຍອດເງິນຕາຍຕົວຢູ່ແລ້ວ — ຝັງຍອດໃໝ່ບໍ່ໄດ້. ໃຊ້ QR ຖາວອນ (ບໍ່ມີຍອດ)', 'error'); return; }
+    if (!t01 || t01[1] !== '11') { setMsg(el, '⚠️ ບໍ່ແມ່ນ QR ຖາວອນ — ຝັງຍອດບໍ່ໄດ້', 'error'); return; }
+    setMsg(el, '✅ QR ນີ້ຝັງຍອດເງິນໃຫ້ອັດຕະໂນມັດໄດ້ — ລູກຄ້າເລືອກຍອດແລ້ວ ສະແກນຈະຂຶ້ນຍອດໃຫ້ເລີຍ', 'success');
+  } catch (e) {
+    console.error(e);
+    setMsg(el, 'ກວດ QR ບໍ່ສຳເລັດ (ບໍ່ກະທົບການບັນທຶກ)', 'error');
+  }
+}
+
+function setLoading(btn, loading) {
+  btn.disabled = loading;
+  btn.classList.toggle('loading', loading);
+}
+
+// ເຮັດໃຫ້ໄລຍະເວລາຖືກຈັດລຽງຈາກນ້ອຍ -> ຫຼາຍ (ຊົ່ວໂມງ/ວັນ/ອາທິດ/ເດືອນ) ເຊັ່ນ 12ຊມ, 1ວັນ, 3ວັນ, 7ວັນ, 30ວັນ
+function durationToHours(label) {
+  const m = String(label || '').match(/(\d+(?:\.\d+)?)\s*(.*)/);
+  if (!m) return Number.MAX_SAFE_INTEGER;
+  const n = parseFloat(m[1]);
+  const u = (m[2] || '').trim().toLowerCase();
+  if (/ຊມ|ຊົ່ວໂມງ|^h/.test(u)) return n;
+  if (/ອາທິດ|ສັບປະດາ|^w/.test(u)) return n * 24 * 7;
+  if (/ເດືອນ|^m/.test(u)) return n * 24 * 30;
+  return n * 24;
+}
+function sortDurationsAsc(list) {
+  return (list || []).slice().sort((a, b) => durationToHours(a.label) - durationToHours(b.label));
+}
+
+function formatKipAdmin(n) {
+  return Number(n || 0).toLocaleString('de-DE') + ' ກີບ';
+}
+// ---------- ແຖບສະຖານະລວມ (ops strip) ----------
+function renderOpsStrip(products, totalStock) {
+  const strip = document.getElementById('opsStrip');
+  strip.innerHTML = `
+    <div class="ops-chip"><div class="ops-num">${products.length}</div><div class="ops-label">ສິນຄ້າທັງໝົດ</div></div>
+    <div class="ops-chip"><div class="ops-num">${totalStock}</div><div class="ops-label">ລະຫັດຄົງເຫຼືອ</div></div>
+  `;
+  // ຄືນຄ່າ chip ຈຳນວນຄຳຂໍເຕີມເງິນ (ຖ້າມີ) ຫຼັງຈາກ render ໃໝ່
+  if (typeof window.__pendingTopupCount === 'number') {
+    appendTopupOpsChip(window.__pendingTopupCount);
+  }
+}
+
+function appendTopupOpsChip(count) {
+  window.__pendingTopupCount = count;
+  const strip = document.getElementById('opsStrip');
+  if (!strip) return;
+  const old = strip.querySelector('.ops-chip.topup-chip');
+  if (old) old.remove();
+  const chip = document.createElement('div');
+  chip.className = 'ops-chip topup-chip';
+  chip.innerHTML = `<div class="ops-num">${count}</div><div class="ops-label">ຄຳຂໍລໍຖ້າ</div>`;
+  strip.appendChild(chip);
+
+  const badge = document.getElementById('topupBadge');
+  if (badge) {
+    if (count > 0) {
+      badge.textContent = count;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+}
+
+// ---------- ດຶງລາຍການສິນຄ້າ + ສະຕັອກຂອງແຕ່ລະລາຍການ ----------
+async function loadProducts() {
+  const { data: products, error } = await supabaseClient
+    .from('products')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error(error);
+    return [];
+  }
+
+  const { data: allDurations, error: durError } = await supabaseClient
+    .from('product_durations')
+    .select('*')
+    .order('sort_order', { ascending: true });
+
+  if (durError) console.error(durError);
+
+  const { data: allLinks, error: linksError } = await supabaseClient
+    .from('product_links')
+    .select('*')
+    .order('sort_order', { ascending: true });
+
+  if (linksError) console.error(linksError);
+
+  const withStock = await Promise.all((products || []).map(async (p) => {
+    const { data: stock } = await supabaseClient.rpc('product_stock', { p_product_id: p.id });
+    const ownDurations = sortDurationsAsc((allDurations || []).filter(d => d.product_id === p.id));
+    const durationsWithStock = await Promise.all(ownDurations.map(async (d) => {
+      const { data: dStock } = await supabaseClient.rpc('product_duration_stock', { p_duration_id: d.id });
+      return { ...d, stock: dStock ?? 0 };
+    }));
+    const ownLinks = (allLinks || []).filter(l => l.product_id === p.id);
+    return { ...p, stock: stock ?? 0, durations: durationsWithStock, links: ownLinks };
+  }));
+
+  currentProducts = withStock;
+  const totalStock = withStock.reduce((sum, p) => sum + (p.stock || 0), 0);
+  renderOpsStrip(withStock, totalStock);
+  renderManageList(withStock);
+  renderCodeProductSelect(withStock);
+  if (typeof window.refreshRemoveCodesProducts === 'function') window.refreshRemoveCodesProducts();
+  if (typeof window.refreshCodeVaultProducts === 'function') window.refreshCodeVaultProducts();
+  renderAgentPriceList(withStock);
+  renderCategoryOptions(withStock);
+  renderD2Dashboard();
+  return withStock;
+}
+
+// ---------- ປຸ່ມ "ຢືນຢັນ" ຢູ່ຄູ່ກັບແຕ່ລະຊ່ອງຊື່ໝວດໝູ່ (ບໍ່ຕ້ອງເລື່ອນລົງໄປກົດປຸ່ມລວມທາງລຸ່ມ) ----------
+// ບັນທຶກສະເພາະໝວດໝູ່ນັ້ນອັນດຽວ, ພ້ອມອັບເດດສິນຄ້າທີ່ໃຊ້ຊື່ເກົ່າຢູ່ໃຫ້ຕາມຊື່ໃໝ່ນຳ (ຄືກັນກັບປຸ່ມລວມ)
+async function saveSingleCategoryName(i) {
+  const input = document.getElementById(`catName${i}`);
+  const btn = document.getElementById(`catNameConfirm${i}`);
+  const msg = document.getElementById(`catNameMsg${i}`);
+  if (!input || !btn) return;
+
+  const val = input.value.trim();
+  const newName = val || `ໝວດໝູ່ ${i}`;
+  const oldName = (
+    currentSiteSettings && currentSiteSettings[`category_${i}_name`]
+      ? String(currentSiteSettings[`category_${i}_name`])
+      : `ໝວດໝູ່ ${i}`
+  ).trim();
+
+  if (oldName === newName) {
+    setMsg(msg, 'ຍັງບໍ່ໄດ້ແກ້ໄຂຫຍັງ', 'pending');
+    return;
+  }
+
+  setLoading(btn, true);
+  setMsg(msg, 'ກຳລັງບັນທຶກ...', 'pending');
+  try {
+    if (oldName) {
+      await renameCategoryInProducts(oldName, newName);
+      await loadProducts();
+    }
+
+    await ensureSiteSettingsRow();
+    const { error: settingsError } = await supabaseClient
+      .from(SITE_SETTINGS_TABLE)
+      .update({ [`category_${i}_name`]: newName, updated_at: new Date().toISOString() })
+      .eq('id', SITE_SETTINGS_ID);
+    if (settingsError) throw settingsError;
+
+    setMsg(msg, 'ບັນທຶກຊື່ຫມວດໝູ່ນີ້ສຳເລັດແລ້ວ — ໜ້າຮ້ານຈິງຈະອັບເດດອັດຕະໂນມັດ', 'success');
+    await loadSiteSettingsAdmin();
+  } catch (err) {
+    console.error(err);
+    setMsg(msg, 'ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function initCategoryNameConfirmButtons() {
+  for (let i = 1; i <= 4; i++) {
+    const btn = document.getElementById(`catNameConfirm${i}`);
+    if (btn && !btn.dataset.bound) {
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', () => saveSingleCategoryName(i));
+    }
+    const input = document.getElementById(`catName${i}`);
+    if (input && !input.dataset.bound) {
+      input.dataset.bound = '1';
+      // ກົດ Enter ໃນຊ່ອງຊື່ = ຢືນຢັນທັນທີ (ບໍ່ຕ້ອງກົດເມົາໃສ່ປຸ່ມ)
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); saveSingleCategoryName(i); }
+      });
+    }
+  }
+}
+
+// ---------- ຫົວຂໍ້ໃຫຍ່ (bigTitle) ແລະ ຄຳອະທິບາຍ (desc) ເທິງແບນເນີໝວດໝູ່ — ບັນທຶກລົງ site_settings ----------
+// ໃຊ້ pattern ດຽວກັນກັບ saveSingleCategoryName ຂ້າງເທິງ (ຄອລັມ category_{i}_title / category_{i}_desc
+// ຕ້ອງມີຢູ່ໃນຕາຕະລາງ site_settings ຂອງ Supabase ກ່ອນ — ຖ້າຄອລັມຍັງບໍ່ມີ ການບັນທຶກຈະ error)
+async function saveSingleCategoryField(i, field, inputId, btnId, msgId) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  const msg = document.getElementById(msgId);
+  if (!input || !btn) return;
+
+  const newVal = input.value.trim();
+  setLoading(btn, true);
+  setMsg(msg, 'ກຳລັງບັນທຶກ...', 'pending');
+  try {
+    await ensureSiteSettingsRow();
+    const { error } = await supabaseClient
+      .from(SITE_SETTINGS_TABLE)
+      .update({ [`category_${i}_${field}`]: newVal, updated_at: new Date().toISOString() })
+      .eq('id', SITE_SETTINGS_ID);
+    if (error) throw error;
+    setMsg(msg, 'ບັນທຶກສຳເລັດແລ້ວ — ໜ້າຮ້ານຈິງຈະອັບເດດອັດຕະໂນມັດ', 'success');
+    await loadSiteSettingsAdmin();
+  } catch (err) {
+    console.error(err);
+    setMsg(msg, 'ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+
+// ອັບເດດ badge ຂໍ້ຄວາມ "ເປີດ"/"ປິດ" ຂ້າງໆ toggle ຂອງແຕ່ລະໝວດໝູ່
+function updateCategoryEnableStateLabel(i, isEnabled) {
+  const stateEl = document.getElementById(`catEnableState${i}`);
+  if (!stateEl) return;
+  stateEl.textContent = isEnabled ? 'ເປີດ' : 'ປິດ';
+  stateEl.classList.toggle('is-off', !isEnabled);
+}
+
+// ---------- ປຸ່ມເປີດ/ປິດ ໝວດໝູ່ (category_{i}_enabled) — ບັນທຶກທັນທີທີ່ກົດ ----------
+// ປິດ = ໝວດໝູ່ນັ້ນ (ພ້ອມສິນຄ້າທັງໝົດຢູ່ໃນນັ້ນ) ຈະຫາຍໄປຈາກໜ້າຮ້ານຈິງທັນທີ (ໜ້າຫຼັກ, ໜ້າ
+// ໝວດໝູ່ (category.html), ແລະ ຈະເປີດ product.html ຂອງສິນຄ້ານັ້ນກົງໆບໍ່ໄດ້ນຳ — ຄຸມຝັ່ງ Worker
+// ໃນ /api/public/storefront ໂດຍກົງ, ບໍ່ແມ່ນແຄ່ເຊື່ອງດ້ວຍ CSS)
+async function saveCategoryEnabled(i, isEnabled) {
+  const input = document.getElementById(`catEnabled${i}`);
+  try {
+    await ensureSiteSettingsRow();
+    const { error } = await supabaseClient
+      .from(SITE_SETTINGS_TABLE)
+      .update({ [`category_${i}_enabled`]: isEnabled, updated_at: new Date().toISOString() })
+      .eq('id', SITE_SETTINGS_ID);
+    if (error) throw error;
+    updateCategoryEnableStateLabel(i, isEnabled);
+    await loadSiteSettingsAdmin();
+  } catch (err) {
+    console.error(err);
+    if (input) input.checked = !isEnabled; // ບັນທຶກບໍ່ສຳເລັດ -> ຄືນຄ່າ checkbox ກັບຄືນ
+    updateCategoryEnableStateLabel(i, !isEnabled);
+    alert('ບັນທຶກບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'));
+  }
+}
+
+function initCategoryEnabledToggles() {
+  for (let i = 1; i <= 4; i++) {
+    const input = document.getElementById(`catEnabled${i}`);
+    if (input && !input.dataset.bound) {
+      input.dataset.bound = '1';
+      input.addEventListener('change', () => saveCategoryEnabled(i, input.checked));
+    }
+  }
+}
+
+
+
+function initCategoryTitleDescConfirmButtons() {
+  for (let i = 1; i <= 4; i++) {
+    const tagBtn = document.getElementById(`catTagConfirm${i}`);
+    if (tagBtn && !tagBtn.dataset.bound) {
+      tagBtn.dataset.bound = '1';
+      tagBtn.addEventListener('click', () => saveSingleCategoryField(i, 'tag', `catTag${i}`, `catTagConfirm${i}`, `catTagMsg${i}`));
+    }
+    const tagInput = document.getElementById(`catTag${i}`);
+    if (tagInput && !tagInput.dataset.bound) {
+      tagInput.dataset.bound = '1';
+      tagInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); saveSingleCategoryField(i, 'tag', `catTag${i}`, `catTagConfirm${i}`, `catTagMsg${i}`); }
+      });
+    }
+
+    const titleBtn = document.getElementById(`catTitleConfirm${i}`);
+    if (titleBtn && !titleBtn.dataset.bound) {
+      titleBtn.dataset.bound = '1';
+      titleBtn.addEventListener('click', () => saveSingleCategoryField(i, 'title', `catTitle${i}`, `catTitleConfirm${i}`, `catTitleMsg${i}`));
+    }
+    const titleInput = document.getElementById(`catTitle${i}`);
+    if (titleInput && !titleInput.dataset.bound) {
+      titleInput.dataset.bound = '1';
+      titleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); saveSingleCategoryField(i, 'title', `catTitle${i}`, `catTitleConfirm${i}`, `catTitleMsg${i}`); }
+      });
+    }
+
+    const descBtn = document.getElementById(`catDescConfirm${i}`);
+    if (descBtn && !descBtn.dataset.bound) {
+      descBtn.dataset.bound = '1';
+      descBtn.addEventListener('click', () => saveSingleCategoryField(i, 'desc', `catDesc${i}`, `catDescConfirm${i}`, `catDescMsg${i}`));
+    }
+    const descInput = document.getElementById(`catDesc${i}`);
+    if (descInput && !descInput.dataset.bound) {
+      descInput.dataset.bound = '1';
+      descInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); saveSingleCategoryField(i, 'desc', `catDesc${i}`, `catDescConfirm${i}`, `catDescMsg${i}`); }
+      });
+    }
+  }
+}
+
+// ---------- ຫຼາຍໝວດໝູ່ຕໍ່ 1 ສິນຄ້າ ----------
+// ເກັບໃນຄອລັມ products.category ເດີມ (ຂໍ້ຄວາມ) ໂດຍຂັ້ນດ້ວຍ "|" ເຊັ່ນ "ໝວດ A|ໝວດ B" — ບໍ່ຕ້ອງແກ້ຖານຂໍ້ມູນ
+const CAT_SEP = '|';
+function splitCats(v) {
+  return String(v || '').split(CAT_SEP).map(x => x.trim()).filter(Boolean);
+}
+function joinCats(arr) {
+  return [...new Set((arr || []).map(x => String(x).trim()).filter(Boolean))].join(CAT_SEP);
+}
+function productHasCat(p, name) {
+  return splitCats(p && p.category).includes(String(name || '').trim());
+}
+function catLabel(v) { return splitCats(v).join(' • '); }
+
+// ປ່ຽນຊື່ໝວດໝູ່ໃນທຸກສິນຄ້າ (ຮອງຮັບສິນຄ້າທີ່ມີຫຼາຍໝວດ "A|B")
+async function renameCategoryInProducts(oldName, newName) {
+  const { data, error } = await supabaseClient
+    .from('products')
+    .select('id,category')
+  if (error) throw error;
+  for (const p of (data || [])) {
+    const cats = splitCats(p.category);
+    if (!cats.includes(oldName)) continue;
+    const next = joinCats(cats.map(c => (c === oldName ? newName : c)));
+    const { error: upErr } = await supabaseClient.from('products').update({ category: next }).eq('id', p.id);
+    if (upErr) throw upErr;
+  }
+}
+
+(function injectCatMultiStyle() {
+  if (document.getElementById('catMultiStyle')) return;
+  const st = document.createElement('style');
+  st.id = 'catMultiStyle';
+  st.textContent = `
+    .cat-multi{display:flex;flex-wrap:wrap;gap:8px;width:100%}
+    .cat-multi-hint{display:block;margin-top:6px;font-size:12px;color:#a99fa5}
+    .cat-chk{position:relative;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#f5f0f2;cursor:pointer;
+      font:600 13px/1.3 'Noto Sans Lao','Chakra Petch',sans-serif;user-select:none;transition:background .15s,border-color .15s}
+    .cat-chk input{position:absolute;opacity:0;pointer-events:none}
+    .cat-chk .cat-box{width:18px;height:18px;border-radius:5px;border:1.5px solid rgba(255,255,255,.35);display:inline-flex;
+      align-items:center;justify-content:center;flex:0 0 18px;font-size:12px;color:transparent}
+    .cat-chk:has(input:checked){background:rgba(255,42,42,.16);border-color:#ff2a2a}
+    .cat-chk:has(input:checked) .cat-box{background:#ff2a2a;border-color:#ff2a2a;color:#fff}
+    .cat-chk:has(input:focus-visible){outline:2px solid #ff2a2a;outline-offset:2px}
+  `;
+  document.head.appendChild(st);
+})();
+
+// ສ້າງກ່ອງຕິກໝວດໝູ່ (checkbox) — selected = ລາຍຊື່ໝວດທີ່ຕິກໄວ້ແລ້ວ
+function buildCatChecksHtml(names, selected, cls) {
+  const sel = new Set(selected || []);
+  return names.map(c => {
+    const esc = escapeHtmlAdmin(c);
+    return `<label class="cat-chk"><input type="checkbox" class="${cls}" value="${esc}" ${sel.has(c) ? 'checked' : ''}><span class="cat-box">✓</span><span>${esc}</span></label>`;
+  }).join('');
+}
+function getAllCategoryNames(products) {
+  const fromProducts = (products || []).flatMap(p => splitCats(p.category));
+  return [...new Set([...getCurrentCategoryNames(), ...fromProducts])];
+}
+
+// ໃຊ້ຊື່ຈິງທີ່ແອດມິນຕັ້ງໄວ້ໃນ "ຕັ້ງຄ່າຮ້ານ > ໝວດໝູ່ 1-10" (category_1_name ... category_10_name)
+// ເພື່ອໃຫ້ໝວດໝູ່ທີ່ເລືອກຕອນເພີ່ມສິນຄ້າ ກົງກັນກັບ card ໝວດໝູ່ທີ່ໂຊວ໌ຢູ່ໜ້າຮ້ານ/ໜ້າໝວດໝູ່ທັງໝົດ ແບບ 100%
+function getCurrentCategoryNames() {
+  const names = [];
+  for (let i = 1; i <= 4; i++) {
+    const raw = currentSiteSettings && currentSiteSettings[`category_${i}_name`];
+    const trimmed = raw ? String(raw).trim() : '';
+    // ສຳຄັນ: ຕ້ອງໃຊ້ fallback ທຸກຄັ້ງທີ່ຊື່ຫວ່າງ/ມີແຕ່ຊ່ອງວ່າງ ບໍ່ດັ່ງນັ້ນໝວດໝູ່ນັ້ນຈະ
+    // "ຫາຍໄປ" ຈາກລາຍການເລືອກຕອນເພີ່ມສິນຄ້າແບບງຽບໆ (ບັນຫາທີ່ເຄີຍພົບ)
+    const name = trimmed || `ໝວດໝູ່ ${i}`;
+    names.push(name);
+  }
+  return names;
+}
+
+function renderCategoryOptions(products) {
+  const box = document.getElementById('pCategoryChecks');
+  if (!box) return;
+
+  const categories = getAllCategoryNames(products)
+    .sort((a, b) => a.localeCompare(b, 'th'));
+
+  // ຈື່ໝວດທີ່ຕິກໄວ້ກ່ອນ render ໃໝ່ (ບໍ່ໃຫ້ຫາຍເວລາຂໍ້ມູນໂຫຼດໃໝ່)
+  const prev = [...box.querySelectorAll('input:checked')].map(i => i.value);
+  box.innerHTML = buildCatChecksHtml(categories, prev.filter(c => categories.includes(c)), 'p-cat-cb');
+}
+
+// ---------- ແຜງຈັດການສິນຄ້າ (ແກ້ຊື່/ລາຄາ/ລຶບ) ----------
+// ແຕ່ລະສິນຄ້າເປັນແຖວຍໍ່ — ກົດເພື່ອກາງອອກແກ້ໄຂ. ຈື່ແຖວທີ່ເປີດໄວ້ ເພື່ອບໍ່ໃຫ້ພັບຄືນເວລາ render ໃໝ່
+const manageOpenIds = new Set();
+let manageFilter = 'all';
+let manageSearchTerm = '';
+
+const PRODUCT_STATE_LABEL = { live: 'ກຳລັງຂາຍ', paused: 'ຢຸດຂາຍ', hidden: 'ເຊື່ອງໄວ້' };
+function productState(p) { return p.archived ? 'hidden' : (p.paused ? 'paused' : 'live'); }
+
+function productSummary(p) {
+  const durs = p.durations || [];
+  if (p.duration_enabled) {
+    const stock = durs.reduce((s, d) => s + (Number(d.stock) || 0), 0);
+    const from = durs.length ? Math.min(...durs.map(d => Number(d.price) || 0)) : 0;
+    return {
+      price: durs.length ? `ເລີ່ມ ${formatKipAdmin(from)}` : 'ຍັງບໍ່ມີໄລຍະເວລາ',
+      extra: '',
+      stock,
+    };
+  }
+  return { price: formatKipAdmin(p.price), extra: '', stock: Number(p.stock) || 0 };
+}
+
+const ICON_CAMERA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+const ICON_CHEVRON = '<svg class="prod-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+const ICON_PENCIL = '<svg class="pdc-edit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+function initManageToolbar() {
+  const bar = document.getElementById('manageToolbar');
+  if (!bar || bar.dataset.bound) return;
+  bar.dataset.bound = '1';
+  const search = document.getElementById('manageSearch');
+  if (search) search.addEventListener('input', () => { manageSearchTerm = search.value; applyManageFilter(); });
+  bar.querySelectorAll('[data-pf]').forEach(b => {
+    b.addEventListener('click', () => { manageFilter = b.dataset.pf; applyManageFilter(); });
+  });
+}
+
+// ຄົ້ນຫາ/ກັ່ນຕອງດ້ວຍການສະຫຼັບ hidden ຂອງແຖວ — ບໍ່ render ໃໝ່ ຈຶ່ງບໍ່ເສຍຄ່າທີ່ກຳລັງພິມ
+function applyManageFilter() {
+  const list = document.getElementById('manageList');
+  const bar = document.getElementById('manageToolbar');
+  if (!list) return;
+  const term = manageSearchTerm.trim().toLowerCase();
+  const counts = { all: 0, live: 0, paused: 0, hidden: 0 };
+  let shown = 0;
+  list.querySelectorAll('.prod-row').forEach(row => {
+    const st = row.dataset.state;
+    counts.all++;
+    counts[st] = (counts[st] || 0) + 1;
+    const ok = (manageFilter === 'all' || manageFilter === st) && (!term || row.dataset.name.includes(term));
+    row.hidden = !ok;
+    if (ok) shown++;
+  });
+  if (bar) {
+    bar.querySelectorAll('[data-pf]').forEach(b => {
+      const on = b.dataset.pf === manageFilter;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      const n = b.querySelector('b');
+      if (n) n.textContent = counts[b.dataset.pf] || 0;
+    });
+  }
+  const none = list.querySelector('.pm-none');
+  if (none) none.hidden = shown > 0;
+}
+
+function renderManageList(products) {
+  const list = document.getElementById('manageList');
+  initManageToolbar();
+  if (!products.length) {
+    list.innerHTML = '<div class="empty-note">ຍັງບໍ່ມີສິນຄ້າ — ເພີ່ມສິນຄ້າກ່ອນທີ່ແຖບ "ເພີ່ມສິນຄ້າ"</div>';
+    return;
+  }
+
+  list.innerHTML = products.map(p => {
+    const st = productState(p);
+    const sum = productSummary(p);
+    const open = manageOpenIds.has(p.id);
+    const name = escapeHtmlAdmin(p.name || '');
+    const durs = p.durations || [];
+    const links = p.links || [];
+    return `
+    <div class="prod-row is-${st} ${open ? 'is-open' : ''}" data-id="${p.id}" data-state="${st}" data-name="${name.toLowerCase()}">
+      <div class="prod-summary" role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}">
+        <div class="prod-thumb-wrap" title="ກົດເພື່ອປ່ຽນຮູບ">
+          <img class="prod-thumb" src="${escapeHtmlAdmin(p.image_url || '')}" alt="">
+          <span class="thumb-edit-badge">${ICON_CAMERA}</span>
+          <input type="file" class="edit-image-input" accept="image/*" hidden>
+        </div>
+        <div class="prod-sum-text">
+          <div class="prod-sum-name">${name || 'ບໍ່ມີຊື່'}</div>
+          <div class="prod-sum-sub">
+            <span class="prod-sum-price">${sum.price}</span>
+            ${sum.extra ? `<span>${sum.extra}</span>` : ''}
+            <span class="${sum.stock === 0 ? 'is-out' : ''}">${sum.stock === 0 ? 'ໝົດສະຕັອກ' : `ເຫຼືອ ${sum.stock} ລະຫັດ`}</span>
+          </div>
+        </div>
+        <span class="prod-state is-${st}">${PRODUCT_STATE_LABEL[st]}</span>
+        ${ICON_CHEVRON}
+      </div>
+
+      <div class="prod-edit" ${open ? '' : 'hidden'}>
+        <div class="pe-section">
+          <div class="pe-grid">
+            <label class="pe-field pe-grow">
+              <span>ຊື່ສິນຄ້າ</span>
+              <input type="text" class="edit-name" value="${name}" placeholder="ຊື່ສິນຄ້າ">
+            </label>
+            ${p.duration_enabled
+              ? `<input type="hidden" class="edit-price" value="${Number(p.price) || 0}">`
+              : `<label class="pe-field pe-price">
+                  <span>ລາຄາ (ກີບ)</span>
+                  <input type="number" class="edit-price" value="${Number(p.price) || 0}" min="0" step="0.01" inputmode="decimal" placeholder="ລາຄາ">
+                </label>`}
+          </div>
+          <label class="pe-field">
+            <span>ລາຍລະອຽດ <em>ສະແດງໃຕ້ປຸ່ມຊື້</em></span>
+            <textarea class="edit-description" rows="3" placeholder="ລາຍລະອຽດສິນຄ້າ">${escapeHtmlAdmin(p.description || '')}</textarea>
+          </label>
+        </div>
+
+        <div class="pe-section">
+          <div class="pe-title">ໝວດໝູ່ <small>ຕິກໄດ້ຫຼາຍໝວດ</small></div>
+          <div class="cat-multi">${buildCatChecksHtml(getAllCategoryNames(products), splitCats(p.category), 'edit-cat-cb')}</div>
+        </div>
+
+        <div class="pe-section">
+          <label class="pin-heart-toggle">
+            <input type="checkbox" class="edit-featured" ${p.featured ? 'checked' : ''}>
+            <span class="pin-heart-ui"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></span>
+            <span class="pin-heart-text"><b>ປັກໝຸດສິນຄ້າ (ຫົວໃຈ)</b><small>ຂຶ້ນຢູ່ເທິງສຸດຂອງໜ້າໝວດໝູ່</small></span>
+          </label>
+        </div>
+
+        <div class="pe-section">
+          <label class="pe-switch">
+            <input type="checkbox" class="edit-paused" ${p.paused ? 'checked' : ''}>
+            <span class="pe-switch-ui" aria-hidden="true"></span>
+            <span class="pe-switch-text"><b>ຢຸດຂາຍຊົ່ວຄາວ</b><small>ລູກຄ້າຈະສັ່ງຊື້ບໍ່ໄດ້ ຈົນກວ່າຈະເປີດຄືນ</small></span>
+          </label>
+          <div class="pause-note-wrap" ${p.paused ? '' : 'hidden'}>
+            <input type="text" class="edit-paused-note" value="${escapeHtmlAdmin(p.paused_note || '')}" placeholder="ແຈ້ງລູກຄ້າ ເຊັ່ນ: ສະຕັອກໝົດ ຈະເປີດຂາຍຄືນ 20:00">
+          </div>
+        </div>
+
+        ${p.duration_enabled ? `
+        <div class="pe-section">
+          <div class="pe-title">ໄລຍະເວລາ ແລະ ລາຄາ <small>ແຕະເພື່ອແກ້ລາຄາ</small></div>
+          <div class="prod-duration-list">
+            ${durs.map(d => `
+              <span class="prod-duration-chip" data-duration-id="${d.id}" data-price="${d.price}" title="ກົດເພື່ອແກ້ໄຂລາຄາ">
+                <span class="pdc-text"><b>${escapeHtmlAdmin(d.label)}</b><span>${formatKipAdmin(d.price)}</span><em class="${Number(d.stock) === 0 ? 'is-out' : ''}">ເຫຼືອ ${d.stock}</em></span>
+                ${ICON_PENCIL}
+                <button type="button" class="pdc-del-btn" title="ລຶບໄລຍະເວລານີ້" aria-label="ລຶບໄລຍະເວລານີ້">×</button>
+              </span>
+            `).join('')}
+          </div>
+          <details class="pe-fold">
+            <summary>ເພີ່ມໄລຍະເວລາໃໝ່</summary>
+            <div class="dur-add-inline">
+              <input type="number" class="dur-add-qty" min="1" step="1" inputmode="numeric" placeholder="ຈຳນວນ">
+              <select class="dur-add-unit">
+                <option value="ຊມ">ຊົ່ວໂມງ</option>
+                <option value="ວັນ" selected>ວັນ</option>
+              </select>
+              <input type="number" class="dur-add-price" min="0" step="0.01" inputmode="decimal" placeholder="ລາຄາ (ກີບ)">
+              <button type="button" class="dur-add-btn" title="ເພີ່ມໄລຍະເວລາ">ເພີ່ມ</button>
+            </div>
+          </details>
+        </div>` : ''}
+
+        <div class="pe-section">
+          <div class="pe-title">ລິ້ງດາວໂຫຼດ</div>
+          <div class="prod-links-list">
+            ${links.length ? links.map(l => `
+              <span class="prod-link-chip" data-link-id="${l.id}">
+                <span class="link-chip-label">${escapeHtmlAdmin(l.label)}</span>
+                <button type="button" class="link-chip-edit" title="ແກ້ໄຂລິ້ງ" aria-label="ແກ້ໄຂລິ້ງ">✎</button>
+                <button type="button" class="link-chip-remove" title="ລຶບລິ້ງ" aria-label="ລຶບລິ້ງ">×</button>
+              </span>
+            `).join('') : '<span class="pe-none">ຍັງບໍ່ມີລິ້ງດາວໂຫຼດ</span>'}
+          </div>
+          <details class="pe-fold">
+            <summary>ເພີ່ມລິ້ງດາວໂຫຼດ</summary>
+            <div class="link-add-inline">
+              <input type="text" class="link-add-label" placeholder="ຊື່ລິ້ງ">
+              <input type="url" class="link-add-url" placeholder="https://...">
+              <button type="button" class="link-add-btn" title="ເພີ່ມລິ້ງ">ເພີ່ມ</button>
+            </div>
+          </details>
+        </div>
+
+        <div class="pe-foot">
+          <button type="button" class="pe-btn pe-primary save-btn">ບັນທຶກການແກ້ໄຂ</button>
+          <div class="pe-more">
+            <button type="button" class="pe-btn pe-ghost del-btn">${p.archived ? 'ນຳກັບມາສະແດງໃນໜ້າຮ້ານ' : 'ເຊື່ອງຈາກໜ້າຮ້ານ'}</button>
+            <button type="button" class="pe-btn pe-danger hard-del-btn">ລຶບຖາວອນ</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('') + '<div class="empty-note pm-none" hidden>ບໍ່ພົບສິນຄ້າທີ່ຄົ້ນຫາ</div>';
+
+  list.querySelectorAll('.prod-row').forEach(row => {
+    const id = row.dataset.id;
+    const summary = row.querySelector('.prod-summary');
+    const editBox = row.querySelector('.prod-edit');
+
+    const toggleOpen = () => {
+      const open = !row.classList.contains('is-open');
+      row.classList.toggle('is-open', open);
+      editBox.hidden = !open;
+      summary.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) manageOpenIds.add(id); else manageOpenIds.delete(id);
+    };
+    summary.addEventListener('click', (e) => {
+      // ເມື່ອເປີດຢູ່ ການກົດຮູບ = ປ່ຽນຮູບ (ບໍ່ພັບແຖວ)
+      if (row.classList.contains('is-open') && e.target.closest('.prod-thumb-wrap')) return;
+      toggleOpen();
+    });
+    summary.addEventListener('keydown', (e) => {
+      if (e.target !== summary) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleOpen(); }
+    });
+
+    row.querySelector('.save-btn').addEventListener('click', () => saveProduct(id, row));
+
+    const thumbWrap = row.querySelector('.prod-thumb-wrap');
+    const imgInput = row.querySelector('.edit-image-input');
+    if (thumbWrap && imgInput) {
+      thumbWrap.addEventListener('click', (e) => {
+        if (e.target === imgInput || thumbWrap.classList.contains('uploading')) return;
+        if (!row.classList.contains('is-open')) return;
+        imgInput.click();
+      });
+      imgInput.addEventListener('change', () => {
+        const file = imgInput.files && imgInput.files[0];
+        imgInput.value = '';
+        if (file) changeProductImage(id, row, file);
+      });
+    }
+    row.querySelector('.del-btn').addEventListener('click', () => toggleArchiveProduct(id, row));
+    row.querySelector('.hard-del-btn').addEventListener('click', () => hardDeleteProduct(id, row));
+
+    const pauseCb = row.querySelector('.edit-paused');
+    const pauseNoteWrap = row.querySelector('.pause-note-wrap');
+    pauseCb.addEventListener('change', () => {
+      pauseNoteWrap.hidden = !pauseCb.checked;
+    });
+
+    row.querySelector('.link-add-btn').addEventListener('click', () => addProductLink(id, row));
+    row.querySelectorAll('.link-chip-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const chip = btn.closest('.prod-link-chip');
+        openLinkEditor(id, chip.dataset.linkId, chip);
+      });
+    });
+    row.querySelectorAll('.link-chip-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const chip = btn.closest('.prod-link-chip');
+        removeProductLink(chip.dataset.linkId, chip, id);
+      });
+    });
+
+    row.querySelectorAll('.prod-duration-chip').forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        if (e.target.closest('.pdc-del-btn')) {
+          e.stopPropagation();
+          deleteProductDuration(chip.dataset.durationId, id, row);
+          return;
+        }
+        openDurationPriceEditor(chip, id);
+      });
+    });
+
+    const durAddBtn = row.querySelector('.dur-add-btn');
+    if (durAddBtn) durAddBtn.addEventListener('click', () => addProductDuration(id, row));
+  });
+
+  applyManageFilter();
+}
+
+// ---------- ໄລຍະເວລາ — ເພີ່ມໃໝ່ (ຊົ່ວໂມງ / ວັນ) ໃນສິນຄ້າທີ່ມີຢູ່ແລ້ວ ----------
+async function addProductDuration(productId, row) {
+  const qtyInput = row.querySelector('.dur-add-qty');
+  const unitSelect = row.querySelector('.dur-add-unit');
+  const priceInput = row.querySelector('.dur-add-price');
+  const btn = row.querySelector('.dur-add-btn');
+
+  const qty = parseInt(qtyInput.value, 10);
+  const price = parseFloat(priceInput.value);
+  if (!qty || qty < 1) { showToast('ກະລຸນາໃສ່ຈຳນວນຊົ່ວໂມງ/ວັນ'); return; }
+  if (isNaN(price) || price < 0) { showToast('ກະລຸນາໃສ່ລາຄາໃຫ້ຖືກຕ້ອງ'); return; }
+
+  const label = `${qty}${unitSelect.value}`;   // ເຊັ່ນ 12ຊມ, 3ວັນ (ຮູບແບບດຽວກັບທີ່ມີຢູ່ແລ້ວ)
+
+  const p = currentProducts.find(x => x.id === productId);
+  if (p && (p.durations || []).some(d => d.label === label)) {
+    showToast(`ມີໄລຍະເວລາ ${label} ຢູ່ແລ້ວ`);
+    return;
+  }
+
+  const sortOrder = p && p.durations ? p.durations.length : 0;
+  btn.disabled = true;
+  const { error } = await supabaseClient
+    .from('product_durations')
+    .insert({ product_id: productId, label, price, sort_order: sortOrder });
+  btn.disabled = false;
+
+  if (error) {
+    console.error(error);
+    showToast('ເພີ່ມໄລຍະເວລາບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+
+  showToast(`ເພີ່ມ ${label} ສຳເລັດ — ຢ່າລືມເຕີມລະຫັດໃຫ້ໄລຍະເວລານີ້`);
+  loadProducts();
+}
+
+// ---------- ໄລຍະເວລາ — ລຶບ ----------
+async function deleteProductDuration(durationId, productId, row) {
+  const p = currentProducts.find(x => x.id === productId);
+  const d = p && (p.durations || []).find(x => x.id === durationId);
+  if (!d) return;
+
+  if ((p.durations || []).length <= 1) {
+    showToast('ລຶບບໍ່ໄດ້ — ສິນຄ້າທີ່ເປີດໃຊ້ໄລຍະເວລາຕ້ອງມີຢ່າງໜ້ອຍ 1 ໄລຍະ');
+    return;
+  }
+
+  const ok = confirm(
+    `ລຶບໄລຍະເວລາ ${d.label} ຂອງ "${p.name || 'ສິນຄ້ານີ້'}" ?\n\n` +
+    (d.stock > 0 ? `ລະຫັດທີ່ຍັງບໍ່ໄດ້ຂາຍຂອງໄລຍະນີ້ (${d.stock} ລະຫັດ) ຈະຖືກລຶບອອກນຳ.\n` : '') +
+    'ບໍ່ສາມາດກູ້ຄືນໄດ້.'
+  );
+  if (!ok) return;
+
+  if (row) { row.style.opacity = '0.5'; row.style.pointerEvents = 'none'; }
+  try {
+    // ລຶບລະຫັດທີ່ຍັງບໍ່ຖືກຂາຍຂອງໄລຍະນີ້ກ່ອນ (ກັນ foreign key ຄ້າງ)
+    const { error: codeErr } = await supabaseClient
+      .from('product_codes')
+      .delete()
+      .eq('duration_id', durationId)
+      .is('used_by', null)
+      .eq('is_used', false);
+    if (codeErr) throw codeErr;
+
+    const { error } = await supabaseClient
+      .from('product_durations')
+      .delete()
+      .eq('id', durationId);
+    if (error) throw error;
+
+    showToast(`ລຶບ ${d.label} ແລ້ວ`);
+    loadProducts();
+  } catch (err) {
+    console.error(err);
+    const fk = /foreign key|violates|23503/i.test((err && (err.message || err.code)) || '');
+    showToast(
+      fk
+        ? `ລຶບ ${d.label} ບໍ່ໄດ້ ເພາະມີອໍເດີ/ລະຫັດທີ່ຂາຍໄປແລ້ວອ້າງອີງຢູ່`
+        : 'ລຶບບໍ່ສຳເລັດ: ' + ((err && err.message) || 'ລອງໃໝ່ອີກຄັ້ງ')
+    );
+    if (row) { row.style.opacity = ''; row.style.pointerEvents = ''; }
+  }
+}
+
+// ---------- ໄລຍະເວລາ — ແກ້ໄຂລາຄາ (ກົດທີ່ chip ເພື່ອປ່ຽນລາຄາທີ່ໃສ່ຜິດ) ----------
+function openDurationPriceEditor(chip, productId) {
+  if (chip.classList.contains('is-editing')) return;
+  chip.classList.add('is-editing');
+  const durationId = chip.dataset.durationId;
+  const currentPrice = chip.dataset.price;
+
+  chip.innerHTML = `
+    <input type="number" class="pdc-price-input" value="${currentPrice}" min="0" step="0.01">
+    <button type="button" class="pdc-save-btn" title="ບັນທຶກ">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+    </button>
+    <button type="button" class="pdc-cancel-btn" title="ຍົກເລີກ">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  `;
+
+  const input = chip.querySelector('.pdc-price-input');
+  input.focus();
+  input.select();
+
+  const cancel = () => renderManageList(currentProducts);
+
+  const save = () => saveDurationPrice(chip, productId, durationId, input.value);
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') cancel();
+  });
+  chip.querySelector('.pdc-save-btn').addEventListener('click', save);
+  chip.querySelector('.pdc-cancel-btn').addEventListener('click', cancel);
+}
+
+async function saveDurationPrice(chip, productId, durationId, rawValue) {
+  const newPrice = parseFloat(rawValue);
+  if (isNaN(newPrice) || newPrice < 0) {
+    showToast('ລາຄາບໍ່ຖືກຕ້ອງ');
+    return;
+  }
+
+  const { error } = await supabaseClient
+    .from('product_durations')
+    .update({ price: newPrice })
+    .eq('id', durationId);
+
+  if (error) {
+    console.error(error);
+    showToast('ບັນທຶກລາຄາບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+
+  const p = currentProducts.find(x => x.id === productId);
+  const d = p && p.durations && p.durations.find(x => x.id === durationId);
+  if (d) d.price = newPrice;
+
+  showToast('ບັນທຶກລາຄາໃໝ່ສຳເລັດ');
+  renderManageList(currentProducts);
+}
+
+// ---------- ລິ້ງດາວໂຫຼດ — ເພີ່ມ/ລຶບໃນສິນຄ້າທີ່ມີຢູ່ແລ້ວ ----------
+async function addProductLink(productId, row) {
+  const labelInput = row.querySelector('.link-add-label');
+  const urlInput = row.querySelector('.link-add-url');
+  const label = labelInput.value.trim();
+  const url = urlInput.value.trim();
+  if (!label || !url) {
+    showToast('ກະລຸນາໃສ່ຊື່ ແລະ URL ຂອງລິ້ງໃຫ້ຄົບ');
+    return;
+  }
+
+  const p = currentProducts.find(x => x.id === productId);
+  const sortOrder = p && p.links ? p.links.length : 0;
+
+  const { error } = await supabaseClient
+    .from('product_links')
+    .insert({ product_id: productId, label, url, sort_order: sortOrder });
+
+  if (error) {
+    console.error(error);
+    showToast('ເພີ່ມລິ້ງບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+
+  showToast('ເພີ່ມລິ້ງສຳເລັດ');
+  loadProducts();
+}
+
+// ແກ້ໄຂຊື່/ລິ້ງ ຂອງລິ້ງດາວໂຫຼດທີ່ມີຢູ່ແລ້ວ (ເປີດຟອມແກ້ໄຂໃຕ້ລາຍການລິ້ງ)
+function openLinkEditor(productId, linkId, chipEl) {
+  const p = currentProducts.find(x => x.id === productId);
+  const link = p && p.links && p.links.find(l => String(l.id) === String(linkId));
+  if (!link) return;
+
+  const section = chipEl.closest('.pe-section');
+  const old = section.querySelector('.link-edit-inline');
+  if (old) old.remove();
+
+  const form = document.createElement('div');
+  form.className = 'link-add-inline link-edit-inline';
+  form.innerHTML = `
+    <input type="text" class="link-edit-label" placeholder="ຊື່ລິ້ງ">
+    <input type="url" class="link-edit-url" placeholder="https://...">
+    <div style="display:flex;gap:8px">
+      <button type="button" class="link-edit-save pe-btn pe-primary">ບັນທຶກ</button>
+      <button type="button" class="link-edit-cancel pe-btn pe-ghost">ຍົກເລີກ</button>
+    </div>`;
+  form.querySelector('.link-edit-label').value = link.label || '';
+  form.querySelector('.link-edit-url').value = link.url || '';
+  section.querySelector('.prod-links-list').after(form);
+
+  form.querySelector('.link-edit-cancel').addEventListener('click', () => form.remove());
+  form.querySelector('.link-edit-save').addEventListener('click', async (e) => {
+    const label = form.querySelector('.link-edit-label').value.trim();
+    const url = form.querySelector('.link-edit-url').value.trim();
+    if (!label || !url) { showToast('ກະລຸນາໃສ່ຊື່ ແລະ URL ຂອງລິ້ງໃຫ້ຄົບ'); return; }
+    if (!/^https?:\/\//i.test(url)) { showToast('URL ຕ້ອງຂຶ້ນຕົ້ນດ້ວຍ http:// ຫຼື https://'); return; }
+
+    e.target.disabled = true;
+    const { data, error } = await supabaseClient
+      .from('product_links').update({ label, url }).eq('id', linkId).select();
+    e.target.disabled = false;
+
+    if (error || !data || !data.length) {
+      console.error(error);
+      showToast('ແກ້ໄຂບໍ່ສຳເລັດ: ' + (error ? error.message : 'ບໍ່ມີສິດແກ້ໄຂ (ຕ້ອງເພີ່ມ UPDATE policy ໃຫ້ product_links)'));
+      return;
+    }
+    link.label = label; link.url = url;
+    chipEl.querySelector('.link-chip-label').textContent = label;
+    form.remove();
+    showToast('ແກ້ໄຂລິ້ງສຳເລັດ');
+  });
+}
+
+async function removeProductLink(linkId, chipEl, productId) {
+  if (!confirm('ລຶບລິ້ງນີ້?')) return;
+
+  const { error } = await supabaseClient.from('product_links').delete().eq('id', linkId);
+  if (error) {
+    console.error(error);
+    showToast('ລຶບບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+
+  showToast('ລຶບລິ້ງແລ້ວ');
+  chipEl.remove();
+  const p = currentProducts.find(x => x.id === productId);
+  if (p && p.links) p.links = p.links.filter(l => l.id !== linkId);
+}
+
+// ---------- ປ່ຽນຮູບສິນຄ້າ (ກົດທີ່ຮູບໃນລາຍການ) ----------
+async function changeProductImage(id, row, file) {
+  const wrap = row.querySelector('.prod-thumb-wrap');
+  const img = row.querySelector('.prod-thumb');
+  if (!file || !/^image\//.test(file.type || '')) {
+    showToast('ກະລຸນາເລືອກໄຟລ໌ຮູບພາບ');
+    return;
+  }
+
+  wrap.classList.add('uploading');
+  showToast('ກຳລັງອັບໂຫລດຮູບ...');
+  try {
+    const imageToUpload = await compressImageIfLarge(file);
+    const ext = (imageToUpload.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `products/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    const { error: uploadError } = await supabaseClient.storage
+      .from('product-images')
+      .upload(path, imageToUpload);
+    if (uploadError) throw uploadError;
+
+    const { data: pub } = supabaseClient.storage.from('product-images').getPublicUrl(path);
+    const imageUrl = pub.publicUrl;
+
+    const { error: updateError } = await supabaseClient
+      .from('products')
+      .update({ image_url: imageUrl })
+      .eq('id', id);
+    if (updateError) throw updateError;
+
+    // ອັບເດດຮູບໃນໜ້າທັນທີ ໂດຍບໍ່ລ້າງຂໍ້ຄວາມທີ່ກຳລັງແກ້ຢູ່ໃນແຖວອື່ນ
+    img.style.opacity = '';
+    img.src = imageUrl;
+    const p = currentProducts.find(x => x.id === id);
+    if (p) p.image_url = imageUrl;
+    showToast('ປ່ຽນຮູບສຳເລັດ');
+  } catch (err) {
+    console.error(err);
+    showToast('ປ່ຽນຮູບບໍ່ສຳເລັດ: ' + (err && err.message ? err.message : err));
+  } finally {
+    wrap.classList.remove('uploading');
+  }
+}
+
+async function saveProduct(id, row) {
+  const btn = row.querySelector('.save-btn');
+  const name = row.querySelector('.edit-name').value.trim();
+  const price = parseFloat(row.querySelector('.edit-price').value) || 0;
+  const paused = row.querySelector('.edit-paused').checked;
+  const pausedNote = row.querySelector('.edit-paused-note').value.trim();
+  const description = row.querySelector('.edit-description').value.trim();
+  const featured = row.querySelector('.edit-featured').checked;
+  const catChecked = [...row.querySelectorAll('.edit-cat-cb:checked')].map(i => i.value);
+  if (!name) return;
+  if (!catChecked.length) { showToast('ກະລຸນາຕິກຢ່າງໜ້ອຍ 1 ໝວດໝູ່'); return; }
+  const category = joinCats(catChecked);
+
+  btn.style.color = 'var(--ink-500)';
+  const { error } = await supabaseClient
+    .from('products')
+    .update({ name, price, paused, paused_note: paused ? (pausedNote || null) : null, description: description || null, featured, category })
+    .eq('id', id);
+  if (error) {
+    console.error(error);
+    showToast('ບັນທຶກບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+  showToast('ບັນທຶກສຳເລັດ');
+  const p = currentProducts.find(x => x.id === id);
+  if (p) { p.name = name; p.price = price; p.paused = paused; p.paused_note = paused ? pausedNote : null; p.description = description; p.featured = featured; p.category = category; }
+  loadProducts();
+}
+
+// ສິນຄ້າທີ່ເຄີຍຖືກສັ່ງຊື້ໄປແລ້ວ ຈະລຶບຖາວອນອອກຈາກຕາຕະລາງບໍ່ໄດ້
+// (ຈະຊົນກັບ foreign key ຂອງຕາຕະລາງ orders) — ຈຶ່ງໃຊ້ "ເຊື່ອງ/ນຳກັບມາ" ແທນການລຶບຖາວອນ
+// ເພື່ອຮັກສາປະຫວັດການສັ່ງຊື້ຂອງລູກຄ້າໄວ້ຄົບຖ້ວນ
+async function toggleArchiveProduct(id, row) {
+  const p = currentProducts.find(x => x.id === id);
+  if (!p) return;
+
+  const nextArchived = !p.archived;
+  const confirmMsg = nextArchived
+    ? 'ເອົາສິນຄ້ານີ້ອອກຈາກໜ້າຮ້ານ? (ຍັງບໍ່ລຶບຖາວອນ, ປະຫວັດການສັ່ງຊື້ເກົ່າຍັງຄົງຢູ່ ແລະ ສາມາດນຳກັບມາໄດ້ພາຍຫຼັງ)'
+    : 'ນຳສິນຄ້ານີ້ກັບມາສະແດງໃນໜ້າຮ້ານ?';
+  if (!confirm(confirmMsg)) return;
+
+  const { error } = await supabaseClient
+    .from('products')
+    .update({ archived: nextArchived })
+    .eq('id', id);
+
+  if (error) {
+    console.error(error);
+    showToast('ດຳເນີນການບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+
+  showToast(nextArchived ? 'ເອົາອອກຈາກໜ້າຮ້ານແລ້ວ' : 'ນຳກັບມາສະແດງແລ້ວ');
+  loadProducts();
+}
+
+// ---------- ລຶບສິນຄ້າຖາວອນ (ລຶບຖິ້ມ ບໍ່ໄດ້ພຽງແຕ່ເຊື່ອງ — ບໍ່ສາມາດກູ້ຄືນໄດ້) ----------
+async function hardDeleteProduct(id, row) {
+  const p = currentProducts.find(x => x.id === id);
+  if (!p) return;
+
+  const ok = confirm(
+    `ລຶບ "${p.name || 'ສິນຄ້ານີ້'}" ຖາວອນ?\n\nຈະລຶບຂໍ້ມູນສິນຄ້າ, ໄລຍະເວລາ, ລິ້ງດາວໂຫຼດ ແລະ ລະຫັດຄົງເຫຼືອທັງໝົດຂອງສິນຄ້ານີ້ອອກຈາກລະບົບ. ບໍ່ສາມາດກູ້ຄືນໄດ້.\n\n ຖ້າສິນຄ້ານີ້ເຄີຍມີຄົນສັ່ງຊື້ໄປແລ້ວ, ອໍເດີເກົ່າຂອງສິນຄ້ານີ້ (ໃນ "ລາຍການສັ່ງຊື້"/ປະຫວັດ) ຈະຖືກລຶບໄປພ້ອມກັນນຳ ເນື່ອງຈາກລະບົບຕ້ອງການໃຫ້ທຸກອໍເດີມີສິນຄ້າອ້າງອີງຢູ່ສະເໝີ.\n\n(ຖ້າຢາກລຶບສິນຄ້າອອກຈາກໜ້າຮ້ານ ແຕ່ຍັງເກັບປະຫວັດອໍເດີໄວ້ຄົບ ໃຫ້ໃຊ້ປຸ່ມ "ເອົາອອກຈາກໜ້າຮ້ານ" ແທນ)`
+  );
+  if (!ok) return;
+
+  if (row) {
+    row.style.opacity = '0.5';
+    row.style.pointerEvents = 'none';
+  }
+
+  try {
+    // ລຶບແບບ atomic ດ້ວຍ function ຝັ່ງຖານຂໍ້ມູນ (ຂ້າມບັນຫາ RLS/foreign key ທັງໝົດ)
+    // ຕ້ອງແລ່ນ supabase_migration_admin_delete_product.sql ໃນ Supabase ກ່ອນ ຈຶ່ງຈະໃຊ້ໄດ້
+    const { error } = await supabaseClient.rpc('admin_delete_product', { p_product_id: id });
+    if (error) throw error;
+
+    showToast('ລຶບສິນຄ້າຖາວອນແລ້ວ');
+    loadProducts();
+  } catch (err) {
+    console.error(err);
+    const notSetUp = /function .* does not exist|schema cache/i.test(err.message || '');
+    showToast(
+      notSetUp
+        ? 'ຍັງບໍ່ໄດ້ຕັ້ງຄ່າ: ກະລຸນາແລ່ນ supabase_migration_admin_delete_product.sql ໃນ Supabase SQL Editor ກ່ອນ'
+        : 'ລຶບບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ')
+    );
+    if (row) {
+      row.style.opacity = '';
+      row.style.pointerEvents = '';
+    }
+  }
+}
+
+// ---------- toast ນ້ອຍໆ ----------
+function showToast(message) {
+  let toast = document.querySelector('.toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+// ---------- ແຜງເພີ່ມລະຫັດ ----------
+function renderCodeProductSelect(products) {
+  const select = document.getElementById('codeProductSelect');
+  const prevValue = select.value;
+  const activeProducts = products.filter(p => !p.archived);
+  select.innerHTML = activeProducts.map(p => `<option value="${p.id}">${escapeHtmlAdmin(p.name)}</option>`).join('');
+  if (prevValue && activeProducts.some(p => p.id === prevValue)) select.value = prevValue;
+  renderCodeStockStrip();
+}
+
+function renderCodeStockStrip() {
+  const select = document.getElementById('codeProductSelect');
+  const strip = document.getElementById('codeStockStrip');
+  const durationWrap = document.getElementById('codeDurationWrap');
+  const durationSelect = document.getElementById('codeDurationSelect');
+  const p = currentProducts.find(x => x.id === select.value);
+  if (!p) { strip.innerHTML = ''; durationWrap.style.display = 'none'; return; }
+
+  if (p.duration_enabled) {
+    durationWrap.style.display = 'block';
+    const prevDur = durationSelect.value;
+    durationSelect.innerHTML = (p.durations || [])
+      .map(d => `<option value="${d.id}">${d.label} • ${formatKipAdmin(d.price)} • ຄົງເຫຼືອ ${d.stock}</option>`)
+      .join('') || '<option value="">ຍັງບໍ່ມີຕົວເລືອກໄລຍະເວລາ — ໄປສ້າງທີ່ແຖບ "ເພີ່ມສິນຄ້າ" ກ່ອນ</option>';
+    if (prevDur && (p.durations || []).some(d => d.id === prevDur)) durationSelect.value = prevDur;
+
+    const chosen = (p.durations || []).find(d => d.id === durationSelect.value);
+    strip.innerHTML = chosen ? `
+      <div class="ops-chip"><div class="ops-num">${chosen.stock}</div><div class="ops-label">ລະຫັດຄົງເຫຼືອ (${chosen.label})</div></div>
+      <div class="ops-chip"><div class="ops-num">${formatKipAdmin(chosen.price)}</div><div class="ops-label">ລາຄາ</div></div>
+    ` : '';
+  } else {
+    durationWrap.style.display = 'none';
+    strip.innerHTML = `
+      <div class="ops-chip"><div class="ops-num">${p.stock}</div><div class="ops-label">ລະຫັດຄົງເຫຼືອ</div></div>
+      <div class="ops-chip"><div class="ops-num">${formatKipAdmin(p.price)}</div><div class="ops-label">ລາຄາ</div></div>
+    `;
+  }
+}
+
+// ---------- ແຜງຄຳຂໍເຕີມເງິນ ----------
+let currentTopupRequests = [];
+
+async function loadTopupRequests() {
+  const refreshBtn = document.getElementById('topupRefreshBtn');
+  if (refreshBtn) refreshBtn.classList.add('spinning');
+
+  const { data, error } = await supabaseClient
+    .from('topup_requests')
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+
+  if (refreshBtn) setTimeout(() => refreshBtn.classList.remove('spinning'), 400);
+
+  if (error) {
+    console.error(error);
+    document.getElementById('topupList').innerHTML = '<div class="empty-note">ໂຫຼດຂໍ້ມູນຜິດພາດ</div>';
+    return;
+  }
+
+  currentTopupRequests = data || [];
+  appendTopupOpsChip(currentTopupRequests.length);
+  renderTopupList(currentTopupRequests);
+  renderD2Dashboard();
+}
+
+function renderTopupList(requests) {
+  const list = document.getElementById('topupList');
+  if (!requests.length) {
+    list.innerHTML = '<div class="empty-note">ບໍ່ມີຄຳຂໍເຕີມເງິນທີ່ລໍຖ້າກວດສອບ</div>';
+    return;
+  }
+
+  list.innerHTML = requests.map(r => `
+    <div class="topup-card" data-id="${r.id}">
+      <div class="topup-head">
+        <div>
+          <div class="topup-amount">${formatKipAdmin(r.amount)}</div>
+          <div class="topup-meta">
+            ${r.user_email ? escapeHtmlAdmin(r.user_email) : escapeHtmlAdmin(r.email || 'ບໍ່ມີອີເມວ')}<br>
+            <span class="ref">${new Date(r.created_at).toLocaleString('lo-LA')}${r.ref_no ? ' • ' + escapeHtmlAdmin(r.ref_no) : ''}</span>
+          </div>
+        </div>
+        <span class="topup-status-tag pending">ລໍຖ້າກວດສອບ</span>
+      </div>
+      ${r.slip_url ? `
+        <div class="topup-slip-wrap">
+          <img src="${r.slip_url}" alt="ສະລິບໂອນເງິນ" loading="lazy">
+          <div class="zoom-hint">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            ຂະຫຍາຍ
+          </div>
+        </div>` : ''}
+      <div class="topup-actions-row">
+        <button class="topup-btn approve">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          ຢືນຢັນ
+        </button>
+        <button class="topup-btn reject">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          ປະຕິເສດ
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.topup-slip-wrap img').forEach(img => {
+    img.addEventListener('click', () => {
+      openSlipLightbox(img.src);
+      const id = img.closest('.topup-card')?.dataset.id;
+      markTopupViewing(id);
+    });
+  });
+
+  list.querySelectorAll('.topup-card').forEach(card => {
+    const id = card.dataset.id;
+    card.querySelector('.approve').addEventListener('click', () => decideTopup(id, 'approved', card));
+    card.querySelector('.reject').addEventListener('click', () => decideTopup(id, 'rejected', card));
+  });
+}
+
+// ---- ບອກລູກຄ້າແບບ realtime (ຜ່ານ poll ຝັ່ງ topup.js) ວ່າແອດມິນກຳລັງເປີດເບິ່ງສະລິບ
+//      ຢູ່ — ບໍ່ແຕະ status ຫຼັກ (ຍັງເປັນ 'pending' ຄືເກົ່າ ບໍ່ຫາຍໄປຈາກ queue) ໃຊ້
+//      ຄໍລໍາໃໝ່ຕ່າງຫາກຊື່ viewed_at ແທນ (ຕ້ອງຣັນ migration_add_topup_viewed_at.sql
+//      ໃນ Supabase ກ່ອນ ບໍ່ຢ່າງນັ້ນຄໍລໍານີ້ຈະບໍ່ມີ — ຄ່ອຍ error ງຽບໆ ບໍ່ໃຫ້ກະທົບ
+//      ການອະນຸມັດ/ປະຕິເສດຫຼັກ) ----
+const tuwViewedIds = new Set();
+async function markTopupViewing(id) {
+  if (!id || tuwViewedIds.has(id)) return;
+  tuwViewedIds.add(id);
+  try {
+    await supabaseClient
+      .from('topup_requests')
+      .update({ viewed_at: new Date().toISOString() })
+      .eq('id', id);
+  } catch (err) {
+    console.warn('ອັບເດດ viewed_at ບໍ່ສຳເລັດ (ອາດຍັງບໍ່ໄດ້ຣັນ migration_add_topup_viewed_at.sql)', err);
+  }
+}
+
+async function decideTopup(id, status, card) {
+  const btns = card.querySelectorAll('.topup-btn');
+  btns.forEach(b => b.disabled = true);
+
+  // เรียก Worker (atomic: อนุมัติได้ครั้งเดียว + เติมกระเป๋าในขั้นตอนเดียว กันเติมซ้ำถ้า
+  // มีแอดมินสองคนกดพร้อมกัน หรือกดซ้ำ) แทนการ update ตารางเองจาก browser
+  let result = null, httpStatus = 0;
+  try {
+    const res = await fetch('/api/admin/topup-decision', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topup_id: id, decision: status }),
+    });
+    httpStatus = res.status;
+    result = await res.json().catch(() => ({}));
+  } catch (err) {
+    console.error(err);
+    showToast('ເຊື່ອມຕໍ່ເຊີບເວີບໍ່ໄດ້ ລອງໃໝ່');
+    btns.forEach(b => b.disabled = false);
+    return;
+  }
+
+  if (httpStatus === 409) {
+    showToast('ລາຍການນີ້ຖືກດຳເນີນການໄປແລ້ວ (' + (result && result.status ? result.status : '-') + ')');
+    loadTopupRequests();
+    return;
+  }
+  if (!result || !result.ok) {
+    console.error(result);
+    showToast('ດຳເນີນການບໍ່ສຳເລັດ: ' + ((result && result.error) || httpStatus));
+    btns.forEach(b => b.disabled = false);
+    return;
+  }
+
+  const toastMsg = status === 'approved'
+    ? 'ຢືນຢັນ ແລະ ເຕີມຍອດເງິນເຂົ້າກະເປົາລູກຄ້າສຳເລັດແລ້ວ'
+    : 'ປະຕິເສດຄຳຂໍແລ້ວ';
+
+  showToast(toastMsg);
+  card.style.transition = 'opacity .2s ease, transform .2s ease';
+  card.style.opacity = '0';
+  card.style.transform = 'scale(0.96)';
+  setTimeout(() => {
+    card.remove();
+    loadTopupRequests();
+  }, 200);
+}
+
+// ---------- ແຜງລະບົບຕົວແທນ (reseller) ----------
+const RESELLER_TIER_LABELS = { '7d': '7 ມື້', '14d': '14 ມື້', '30d': '30 ມື້', 'lifetime': 'ຖາວອນ' };
+const RESELLER_TIER_ORDER = ['7d', '14d', '30d', 'lifetime'];
+
+let currentResellerTiers = [];
+let currentResellerKeys = [];
+
+function tierLabel(durationType) {
+  return RESELLER_TIER_LABELS[durationType] || durationType;
+}
+
+async function loadResellerTiers() {
+  const { data, error } = await supabaseClient
+    .from('reseller_tiers')
+    .select('*');
+
+  if (error) {
+    console.error(error);
+    document.getElementById('agentTierList').innerHTML = '<div class="empty-note">ໂຫຼດຂໍ້ມູນຜິດພາດ</div>';
+    return;
+  }
+
+  currentResellerTiers = (data || []).sort(
+    (a, b) => RESELLER_TIER_ORDER.indexOf(a.duration_type) - RESELLER_TIER_ORDER.indexOf(b.duration_type)
+  );
+  renderResellerTiers(currentResellerTiers);
+  populateAgentKeyTierSelect(currentResellerTiers);
+}
+
+function renderResellerTiers(tiers) {
+  const list = document.getElementById('agentTierList');
+  if (!tiers.length) {
+    list.innerHTML = '<div class="empty-note">ຍັງບໍ່ມີລະດັບຕົວແທນ — ກະລຸນາຮັນ SQL schema (reseller-system-v2) ກ່ອນ</div>';
+    return;
+  }
+
+  list.innerHTML = tiers.map(t => {
+    const isLifetime = t.period_days === null;
+    return `
+    <div class="tier-card ${isLifetime ? 'is-lifetime' : ''}" data-duration-type="${t.duration_type}">
+      <div class="tier-card-head">
+        <span class="tier-card-title">${tierLabel(t.duration_type)}</span>
+      </div>
+      ${!isLifetime ? `
+      <div class="tier-card-field">
+        <span>ໂຄວຕ້າຍອດຊື້ ຕໍ່ຮອບ</span>
+        <div class="tier-row">
+          <div class="tier-input">
+            <input type="number" class="edit-quota" value="${t.quota_amount ?? 0}" min="0" step="1" inputmode="numeric" aria-label="ໂຄວຕ້າຍອດຊື້ (ກີບ)">
+            <i>ກີບ</i>
+          </div>
+          <button type="button" class="pe-btn pe-primary save-btn">ບັນທຶກ</button>
+        </div>
+        <small>ຖ້າຊື້ບໍ່ຄົບໃນໄລຍະນີ້ ສິດຕົວແທນຈະຖືກປົດ</small>
+      </div>` : `
+      <div class="tier-card-lifetime-note">ບໍ່ມີເງື່ອນໄຂໂຄວຕ້າ ໃຊ້ໄດ້ຕະຫຼອດໄປ</div>`}
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.tier-card').forEach(card => {
+    const sb = card.querySelector('.save-btn');
+    if (sb) sb.addEventListener('click', () => saveResellerTier(card));
+  });
+}
+
+async function saveResellerTier(card) {
+  const durationType = card.dataset.durationType;
+  const btn = card.querySelector('.save-btn');
+  const quotaInput = card.querySelector('.edit-quota');
+
+  const updates = { updated_at: new Date().toISOString() };
+  if (quotaInput) updates.quota_amount = Number(quotaInput.value) || 0;
+
+  btn.disabled = true;
+  const { error } = await supabaseClient
+    .from('reseller_tiers')
+    .update(updates)
+    .eq('duration_type', durationType);
+  btn.disabled = false;
+
+  if (error) {
+    console.error(error);
+    showToast('ບັນທຶກບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+  showToast(`ບັນທຶກລະດັບ ${tierLabel(durationType)} ສຳເລັດແລ້ວ`);
+  loadResellerTiers();
+}
+
+function populateAgentKeyTierSelect(tiers) {
+  const select = document.getElementById('agentKeyTierSelect');
+  if (!select) return;
+  const prevValue = select.value;
+  select.innerHTML = tiers.map(t => `<option value="${t.duration_type}">${tierLabel(t.duration_type)}</option>`).join('');
+  if (prevValue && tiers.some(t => t.duration_type === prevValue)) select.value = prevValue;
+}
+
+async function createResellerKey() {
+  const btn = document.getElementById('agentCreateKeyBtn');
+  const msg = document.getElementById('agentCreateKeyMsg');
+  const select = document.getElementById('agentKeyTierSelect');
+  const durationType = select.value;
+
+  if (!durationType) {
+    setMsg(msg, 'ບໍ່ພົບລະດັບໃຫ້ເລືອກ', 'error');
+    return;
+  }
+
+  setLoading(btn, true);
+  setMsg(msg, 'ກຳລັງສ້າງຄີຍ໌...', 'pending');
+
+  const { data, error } = await supabaseClient.rpc('admin_create_reseller_key', {
+    p_duration_type: durationType,
+    p_created_by: currentAdminUser ? currentAdminUser.username : null,
+  });
+
+  setLoading(btn, false);
+
+  if (error) {
+    console.error(error);
+    setMsg(msg, 'ສ້າງຄີຍ໌ບໍ່ສຳເລັດ: ' + error.message, 'error');
+    return;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  setMsg(msg, 'ສ້າງຄີຍ໌ສຳເລັດແລ້ວ', 'success');
+
+  const resultBox = document.getElementById('agentNewKeyResult');
+  resultBox.innerHTML = `
+    <div class="new-key-banner">
+      <div>
+        <div class="new-key-banner-label">ຄີຍ໌ໃໝ່ (${tierLabel(row.duration_type)})</div>
+        <div class="new-key-banner-code">${row.code}</div>
+      </div>
+      <button type="button" class="key-copy-btn" id="copyNewKeyBtn" title="ຄັດລອກ">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+    </div>
+  `;
+  document.getElementById('copyNewKeyBtn').addEventListener('click', () => copyKeyCode(row.code));
+
+  loadResellerKeys();
+}
+
+async function copyKeyCode(code) {
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast('ຄັດລອກຄີຍ໌ແລ້ວ');
+  } catch (err) {
+    console.error(err);
+    showToast('ຄັດລອກບໍ່ສຳເລັດ — ຄີຍ໌ຄື: ' + code);
+  }
+}
+
+async function loadResellerKeys() {
+  const refreshBtn = document.getElementById('agentKeysRefreshBtn');
+  if (refreshBtn) refreshBtn.classList.add('spinning');
+
+  const { data, error } = await supabaseClient
+    .from('reseller_keys')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (refreshBtn) setTimeout(() => refreshBtn.classList.remove('spinning'), 400);
+
+  if (error) {
+    console.error(error);
+    document.getElementById('agentKeysList').innerHTML = '<div class="empty-note">ໂຫຼດຂໍ້ມູນຜິດພາດ</div>';
+    return;
+  }
+
+  currentResellerKeys = data || [];
+  renderResellerKeysOpsStrip(currentResellerKeys);
+  renderResellerKeys(currentResellerKeys);
+  loadAgentAccounts();
+}
+
+// ---------- ຕົວຊ່ວຍສະແດງວັນເວລາ/ຊື່ ----------
+function shortDateTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString('lo-LA', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function agentNameByUserId(uid) {
+  if (!uid) return '—';
+  const a = (typeof currentAgentAccounts !== 'undefined' ? currentAgentAccounts : []).find(x => x.user_id === uid);
+  if (a && a.user_email) return a.user_email;
+  const str = String(uid);
+  return str.length > 12 ? str.slice(0, 8) + '…' : str;
+}
+
+// ກັ່ນຕອງລາຍການຄີຍ໌: ຄ່າເລີ່ມຕົ້ນ = ຍັງບໍ່ໄດ້ໃຊ້ (ເພາະເປັນສິ່ງທີ່ແອດມິນຕ້ອງການຫຼາຍທີ່ສຸດ)
+let agentKeysFilter = 'unused';
+
+function renderResellerKeysOpsStrip(keys) {
+  const strip = document.getElementById('agentKeysOpsStrip');
+  if (!strip) return;
+  const unused = keys.filter(k => k.status === 'unused').length;
+  const used = keys.length - unused;
+  strip.innerHTML = `
+    <button type="button" class="ag-seg-btn ${agentKeysFilter === 'unused' ? 'on' : ''}" data-kf="unused"><b>${unused}</b><span>ຍັງບໍ່ໄດ້ໃຊ້</span></button>
+    <button type="button" class="ag-seg-btn ${agentKeysFilter === 'used' ? 'on' : ''}" data-kf="used"><b>${used}</b><span>ໃຊ້ແລ້ວ</span></button>
+  `;
+  if (!strip.dataset.bound) {
+    strip.dataset.bound = '1';
+    strip.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-kf]');
+      if (!b) return;
+      agentKeysFilter = b.dataset.kf;
+      renderResellerKeysOpsStrip(currentResellerKeys);
+      renderResellerKeys(currentResellerKeys);
+    });
+  }
+}
+
+function renderResellerKeys(keys) {
+  const list = document.getElementById('agentKeysList');
+  if (!keys.length) {
+    list.innerHTML = '<div class="empty-note">ຍັງບໍ່ມີຄີຍ໌ — ສ້າງຄີຍ໌ທຳອິດຢູ່ດ້ານເທິງ</div>';
+    return;
+  }
+
+  const showUnused = agentKeysFilter === 'unused';
+  const shown = keys.filter(k => showUnused ? k.status === 'unused' : k.status !== 'unused');
+
+  if (!shown.length) {
+    list.innerHTML = showUnused
+      ? '<div class="empty-note">ບໍ່ມີຄີຍ໌ທີ່ຍັງບໍ່ໄດ້ໃຊ້ — ສ້າງຄີຍ໌ໃໝ່ໄດ້ຢູ່ດ້ານເທິງ</div>'
+      : '<div class="empty-note">ຍັງບໍ່ມີຄີຍ໌ທີ່ຖືກໃຊ້</div>';
+    return;
+  }
+
+  list.innerHTML = shown.map(k => `
+    <div class="agent-key-row" data-code="${escapeHtmlAdmin(k.code)}" data-id="${k.id}" data-status="${k.status}">
+      <div class="agent-key-main">
+        <span class="agent-key-code">${escapeHtmlAdmin(k.code)}</span>
+        <span class="agent-key-meta">${tierLabel(k.duration_type)} · ສ້າງ ${shortDateTime(k.created_at)}</span>
+        ${k.status !== 'unused' ? `<span class="agent-key-meta agent-key-used">ໃຊ້ໂດຍ ${escapeHtmlAdmin(agentNameByUserId(k.used_by))} · ${shortDateTime(k.used_at)}</span>` : ''}
+      </div>
+      <div class="agent-key-right">
+        ${k.status === 'revoked' ? '<span class="key-status-tag revoked">ຖືກປິດ</span>' : ''}
+        ${k.status === 'unused' ? `
+        <button type="button" class="key-copy-btn" title="ຄັດລອກ" aria-label="ຄັດລອກຄີຍ໌">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>` : ''}
+        <button type="button" class="key-del-btn" title="ລຶບຄີຍ໌ນີ້" aria-label="ລຶບຄີຍ໌ນີ້">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  // ແຖບເຄື່ອງມື: ລຶບຄີຍ໌ທີ່ໃຊ້ແລ້ວທັງໝົດໃນຄັ້ງດຽວ (ສະແດງສະເພາະໃນມຸມມອງ "ໃຊ້ແລ້ວ")
+  if (!showUnused) {
+    list.insertAdjacentHTML('afterbegin', `
+      <div class="key-bulk-bar">
+        <span>ຄີຍ໌ທີ່ໃຊ້ແລ້ວ ${shown.length} ລາຍການ</span>
+        <button type="button" class="key-bulk-del-btn" id="agentKeysDelUsedBtn">ລຶບທັງໝົດ</button>
+      </div>`);
+    const bulkBtn = document.getElementById('agentKeysDelUsedBtn');
+    if (bulkBtn) bulkBtn.addEventListener('click', deleteUsedResellerKeys);
+  }
+
+  list.querySelectorAll('.agent-key-row .key-del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.agent-key-row');
+      deleteResellerKey(row.dataset.id, row.dataset.code, row.dataset.status, btn);
+    });
+  });
+
+  list.querySelectorAll('.agent-key-row .key-copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const code = btn.closest('.agent-key-row').dataset.code;
+      copyKeyCode(code);
+    });
+  });
+}
+
+// ---------- ລຶບຄີຍ໌ຕົວແທນ ----------
+// ລຶບສະເພາະແຖວໃນ reseller_keys (ປະຫວັດ/ຄີຍ໌ທີ່ຍັງບໍ່ໄດ້ໃຊ້) — ບໍ່ກະທົບ reseller_status
+// ຄົນທີ່ໃຊ້ຄີຍ໌ນີ້ໄປແລ້ວຍັງເປັນຕົວແທນຢູ່ຕາມເດີມ (ຖ້າຢາກຖອນສິດ ໃຫ້ກົດ "ປິດຕົວແທນ" ໃນລາຍຊື່ຕົວແທນ)
+async function deleteResellerKey(id, code, status, btn) {
+  if (!id) return;
+  const msg = status === 'unused'
+    ? `ລຶບຄີຍ໌ ${code} ?\n\nຄີຍ໌ນີ້ຍັງບໍ່ໄດ້ຖືກໃຊ້ — ລຶບແລ້ວລູກຄ້າຈະກອກໃຊ້ບໍ່ໄດ້ອີກ`
+    : `ລຶບປະຫວັດຄີຍ໌ ${code} ?\n\nຕົວແທນທີ່ເຄີຍໃຊ້ຄີຍ໌ນີ້ຍັງເປັນຕົວແທນຢູ່ຕາມເດີມ (ລຶບສະເພາະປະຫວັດຄີຍ໌)`;
+  if (!confirm(msg)) return;
+  if (btn) btn.disabled = true;
+  const { error } = await supabaseClient.from('reseller_keys').delete().eq('id', id);
+  if (error) {
+    console.error(error);
+    if (btn) btn.disabled = false;
+    showToast('ລຶບຄີຍ໌ບໍ່ສຳເລັດ: ' + (error.message || 'ຜິດພາດ'));
+    return;
+  }
+  showToast('ລຶບຄີຍ໌ແລ້ວ');
+  loadResellerKeys();
+}
+
+async function deleteUsedResellerKeys() {
+  const n = (currentResellerKeys || []).filter(k => k.status !== 'unused').length;
+  if (!n) return;
+  if (!confirm(`ລຶບຄີຍ໌ທີ່ໃຊ້ແລ້ວທັງໝົດ ${n} ລາຍການ ?\n\nຄີຍ໌ທີ່ຍັງບໍ່ໄດ້ໃຊ້ຈະບໍ່ຖືກລຶບ ແລະ ຕົວແທນທີ່ໃຊ້ຄີຍ໌ໄປແລ້ວຍັງເປັນຕົວແທນຢູ່ຕາມເດີມ`)) return;
+  const { error } = await supabaseClient.from('reseller_keys').delete().neq('status', 'unused');
+  if (error) {
+    console.error(error);
+    showToast('ລຶບບໍ່ສຳເລັດ: ' + (error.message || 'ຜິດພາດ'));
+    return;
+  }
+  showToast(`ລຶບຄີຍ໌ທີ່ໃຊ້ແລ້ວ ${n} ລາຍການ`);
+  loadResellerKeys();
+}
+
+// ---------- ຈັດການຕົວແທນ (ອ່ານ/ແກ້ໄຂຈາກ reseller_status ໂດຍກົງ) ----------
+// ໝາຍເຫດສຳຄັນ: reseller_status (ບໍ່ແມ່ນ reseller_keys) ຄືຕາຕະລາງທີ່ RPC get_effective_price /
+// is_active_reseller ໃຊ້ຕັດສິນວ່າຄົນນີ້ຍັງໄດ້ລາຄາຕົວແທນຢູ່ບໍ່ (ອີງໃສ່ reseller_status.is_reseller)
+// reseller_keys ເປັນແຄ່ປະຫວັດວ່າຄີຍ໌ໃດຖືກ redeem ໄປແລ້ວເທົ່ານັ້ນ ບໍ່ມີຜົນຕໍ່ລາຄາໂດຍກົງ —
+// ດັ່ງນັ້ນ "ປິດຕົວແທນ" ຈຶ່ງຕ້ອງແກ້ reseller_status.is_reseller (ບໍ່ແມ່ນ reseller_keys.status)
+// ຈຶ່ງຈະຕັດລາຄາພິເສດຂອງຄົນນັ້ນໄດ້ຈິງທັນທີ
+//
+// ---- ໂຄວຕ້າ "ຮອບ" (cycle) + ຄ້າງ 100% 7 ມື້ກ່ອນຣີເຊັດ ----
+// ຄິດຍອດຊື້ທຽບກັບເປົ້າຈາກ reseller_status.cycle_start ຫາດຽວນີ້ (ບໍ່ແມ່ນ all-time) — ຄົບ 100%
+// ຄັ້ງທຳອິດຈະບັນທຶກ quota_reached_at ແລ້ວຄ້າງ 100% ໄວ້ອີກ RESET_HOLD_MS ກ່ອນຣີເຊັດຮອບໃໝ່
+// (cycle_start = ດຽວນີ້, quota_reached_at = null) — ໂຕເຄິດ+ຣີເຊັດນີ້ເປັນ "lazy": ກວດທຸກຄັ້ງທີ່
+// admin ໂຫຼດລາຍຊື່ຕົວແທນ ຄືກັນກັບ handleResellerDashboard ຝັ່ງ Worker (src/index.js) —
+// ດັ່ງນັ້ນຄ່າ RESET_HOLD_MS ຕ້ອງກົງກັນທັງສອງບ່ອນ
+const RESET_HOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 ມື້ — ຕ້ອງກົງກັບ RESET_HOLD_MS ໃນ src/index.js
+
+let currentAgentAccounts = [];
+let agentAccountsSearchTerm = '';
+let agentAccountsFilter = 'all';          // all | active | revoked
+let agentAccountsOrdersFailed = false;
+let agentAccountsCountdownTimer = null;
+let agentAccountsAutoRefreshing = false;
+
+// ຕົວແທນ 2 = ຕົວແທນທີ່ແອດມິນຕັ້ງຊື່ (display_name) ໃຫ້ແລ້ວ — ກົງກັບ get_effective_price ໃນ Supabase
+function isAgentGroup2(a) {
+  return !!(a && a.display_name && String(a.display_name).trim());
+}
+
+function renderAgentAccountsStrip(accounts) {
+  [
+    { id: 'agentAccounts2OpsStrip', list: (accounts || []).filter(isAgentGroup2) },
+    { id: 'agentAccountsOpsStrip', list: (accounts || []).filter(a => !isAgentGroup2(a)) },
+  ].forEach(({ id, list: grp }) => {
+    const strip = document.getElementById(id);
+    if (!strip) return;
+    const active = grp.filter(a => a.is_reseller).length;
+    const revoked = grp.length - active;
+    strip.innerHTML = [
+      ['all', 'ທັງໝົດ', grp.length],
+      ['active', 'ທຳງານຢູ່', active],
+      ['revoked', 'ຖືກປິດ', revoked],
+    ].map(([k, label, n]) => `
+    <button type="button" class="ag-seg-btn ${agentAccountsFilter === k ? 'on' : ''}" data-af="${k}"><b>${n}</b><span>${label}</span></button>
+  `).join('');
+    if (!strip.dataset.bound) {
+      strip.dataset.bound = '1';
+      strip.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-af]');
+        if (!b) return;
+        agentAccountsFilter = b.dataset.af;
+        renderAgentAccountsStrip(currentAgentAccounts);
+        renderAgentAccounts(currentAgentAccounts, agentAccountsOrdersFailed);
+      });
+    }
+  });
+}
+
+async function loadAgentAccounts() {
+  const list = document.getElementById('agentAccountsList');
+  const strip = document.getElementById('agentAccountsOpsStrip');
+  if (!list) return;
+
+  const { data, error } = await supabaseClient
+    .from('reseller_status')
+    .select('*')
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    console.error(error);
+    if (strip) strip.innerHTML = '';
+    list.innerHTML = '<div class="empty-note">ໂຫຼດຂໍ້ມູນຜິດພາດ: ' + error.message + '</div>';
+    currentAgentAccounts = [];
+    return;
+  }
+
+  let accounts = data || [];
+
+  if (!accounts.length) {
+    if (strip) strip.innerHTML = '';
+    list.innerHTML = '<div class="empty-note">ຍັງບໍ່ມີໃຜໃຊ້ຄີຍ໌ຕົວແທນເລີຍ</div>';
+    currentAgentAccounts = [];
+    return;
+  }
+
+  // ດຶງຍອດຊື້ "ຮອບປັດຈຸບັນ" (cycle_start -> ດຽວນີ້) ຂອງແຕ່ລະຄົນຈາກຕາຕະລາງ orders (ອີງໃສ່ user_email)
+  // — ຖ້າຄົນນັ້ນຍັງບໍ່ມີອີເມວບັນທຶກໄວ້ (redeem ກ່ອນລະບົບເພີ່ມ user_email ເຂົ້າ reseller_status)
+  // ຈະຂ້າມການຄິດຍອດແບບບໍ່ພັງໜ້າ — ພ້ອມກັນນັ້ນກໍ່ກວດ/ຣີເຊັດຮອບໃໝ່ຖ້າຄ້າງ 100% ຄົບ 7 ມື້ແລ້ວ
+  let ordersOk = true;
+  const nowMs = Date.now();
+  accounts = await Promise.all(accounts.map(async (s) => {
+    let cycleStart = s.cycle_start || s.period_start || new Date(nowMs).toISOString();
+    let quotaReachedAt = s.quota_reached_at || null;
+    let needsPersist = !s.cycle_start;
+
+    if (quotaReachedAt && (nowMs - new Date(quotaReachedAt).getTime()) >= RESET_HOLD_MS) {
+      cycleStart = new Date(nowMs).toISOString();
+      quotaReachedAt = null;
+      needsPersist = true;
+    }
+
+    let totalSpent = null;
+    if (s.user_email) {
+      try {
+        const { data: odata, error: oerr } = await supabaseClient
+          .from('orders')
+          .select('price')
+          .eq('user_email', s.user_email)
+          .eq('status', 'completed')
+          .gte('created_at', cycleStart);
+        if (oerr) throw oerr;
+        totalSpent = (odata || []).reduce((sum, o) => sum + (Number(o.price) || 0), 0);
+      } catch (err) {
+        ordersOk = false;
+        console.error('loadAgentAccounts: ດຶງຍອດຂາຍບໍ່ສຳເລັດ', err);
+      }
+    }
+
+    const quota = Number(s.quota_target) || 0;
+    if (quota > 0 && totalSpent !== null && totalSpent >= quota && !quotaReachedAt) {
+      quotaReachedAt = new Date(nowMs).toISOString();
+      needsPersist = true;
+    }
+
+    if (needsPersist) {
+      try {
+        await supabaseClient
+          .from('reseller_status')
+          .update({ cycle_start: cycleStart, quota_reached_at: quotaReachedAt })
+          .eq('user_id', s.user_id);
+      } catch (err) {
+        console.error('loadAgentAccounts: ບັນທຶກຮອບ/ເວລາຄົບເປົ້າບໍ່ສຳເລັດ', err);
+      }
+    }
+
+    // ຫາລະຫັດຄີຍ໌ທີ່ຄົນນີ້ໃຊ້ (ຖ້າມີ) ມາໂຊວ໌ປະກອບ — ບໍ່ບັງຄັບ, ອີງໃສ່ currentResellerKeys ທີ່ໂຫຼດໄວ້ແລ້ວ
+    const matchedKey = (currentResellerKeys || []).find(k => k.used_by === s.user_id);
+    const quotaResetAt = quotaReachedAt ? new Date(new Date(quotaReachedAt).getTime() + RESET_HOLD_MS).toISOString() : null;
+    return { ...s, totalSpent, cycleStart, quotaReachedAt, quotaResetAt, code: matchedKey ? matchedKey.code : null };
+  }));
+
+  currentAgentAccounts = accounts;
+
+  agentAccountsOrdersFailed = !ordersOk;
+  renderAgentAccountsStrip(accounts);
+
+  renderAgentAccounts(currentAgentAccounts, !ordersOk);
+  // ໃຫ້ລາຍການຄີຍ໌ສະແດງອີເມວຂອງຄົນທີ່ໃຊ້ (ຂໍ້ມູນຕົວແທນເພິ່ງໂຫຼດມາ)
+  if (typeof currentResellerKeys !== 'undefined' && currentResellerKeys && currentResellerKeys.length) renderResellerKeys(currentResellerKeys);
+  renderD2Dashboard();
+  startAgentAccountsCountdownTicker();
+}
+
+/* ---------- ນັບຖອຍຫຼັງແບບສົດໆ ໃນລາຍຊື່ຕົວແທນ (ໝົດອາຍຸ + ຄ້າງລໍຣີເຊັດ) ----------
+   ອັບເດດ .agent-acc-countdown[data-expiry]/[data-reset] ທຸກ 1 ວິນາທີ ໂດຍບໍ່ຕ້ອງ render ໃໝ່ທັງໝົດ
+   (ກັນປຸ່ມ/scroll ກະພິບ) — ພໍມີອັນໃດຄົບກຳນົດ (ໝົດອາຍຸ ຫຼື ຄົບ 7 ມື້) ຈະດຶງລາຍຊື່ຄືນຄັ້ງດຽວ
+   ເພື່ອອັບເດດສະຖານະ (ຣີເຊັດຮອບ/ຕັດຕົວແທນ) ໃຫ້ຕົງກັບຄວາມຈິງ */
+function formatCountdownParts(targetIso) {
+  const remain = new Date(targetIso).getTime() - Date.now();
+  if (Number.isNaN(remain)) return null;
+  if (remain <= 0) return { done: true };
+  return {
+    done: false,
+    d: Math.floor(remain / 86400000),
+    h: Math.floor((remain % 86400000) / 3600000),
+    m: Math.floor((remain % 3600000) / 60000),
+    s: Math.floor((remain % 60000) / 1000),
+  };
+}
+
+// ຂໍ້ຄວາມນັບຖອຍຫຼັງ — ໃຊ້ທັງຕອນ render ຄັ້ງທຳອິດ ແລະ ທຸກ tick ເພື່ອບໍ່ໃຫ້ມີຄ່າ "—" ຊົ່ວຄາວ
+// (ຕົ້ນເຫດທີ່ເຮັດໃຫ້ຕົວໜັງສືວາປ/ຕັດແຖວໃໝ່ເມື່ອຕົວເລກເຂົ້າມາຫຼັງ 1 ວິນາທີ)
+function agentCountdownText(iso, doneText) {
+  if (!iso) return '—';
+  const parts = formatCountdownParts(iso);
+  if (!parts) return '—';
+  if (parts.done) return doneText;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${parts.d}ວ ${pad(parts.h)}:${pad(parts.m)}:${pad(parts.s)}`;
+}
+
+let agentAccountsLastAutoRefresh = 0;
+
+function updateAgentAccountsCountdowns() {
+  let newlyDone = false;
+  document.querySelectorAll('.agent-acc-countdown').forEach((elx) => {
+    const isExpiry = elx.hasAttribute('data-expiry');
+    const iso = elx.getAttribute(isExpiry ? 'data-expiry' : 'data-reset');
+    if (!iso) return;
+    const doneText = isExpiry ? 'ໝົດອາຍຸແລ້ວ' : 'ກຳລັງຣີເຊັດ...';
+    const text = agentCountdownText(iso, doneText);
+    // ຂຽນ DOM ສະເພາະເມື່ອຄ່າປ່ຽນ ເພື່ອບໍ່ໃຫ້ layout ຖືກຄິດໃໝ່ໂດຍບໍ່ຈຳເປັນ
+    if (elx.textContent !== text) elx.textContent = text;
+    if (text === doneText && elx.dataset.done !== '1') {
+      elx.dataset.done = '1';
+      newlyDone = true;
+    }
+  });
+  return newlyDone;
+}
+
+function startAgentAccountsCountdownTicker() {
+  if (agentAccountsCountdownTimer) return; // ຕັ້ງໄວ້ຄັ້ງດຽວກໍ່ພໍ (ໂຕ interval ຈະ query DOM ໃໝ່ທຸກ tick ເອງ)
+  agentAccountsCountdownTimer = setInterval(() => {
+    const newlyDone = updateAgentAccountsCountdowns();
+    // ດຶງລາຍຊື່ຄືນສະເພາະເມື່ອມີອັນທີ່ "ເພິ່ງ" ຄົບກຳນົດ ແລະ ຫ່າງຈາກຄັ້ງກ່ອນ ≥ 15 ວິນາທີ
+    // (ກັນ loop ດຶງ+render ໃໝ່ທຸກວິນາທີ ເວລາມີແຖວທີ່ໝົດອາຍຸຄ້າງຢູ່ໃນລາຍຊື່)
+    if (newlyDone && !agentAccountsAutoRefreshing && Date.now() - agentAccountsLastAutoRefresh >= 15000) {
+      agentAccountsAutoRefreshing = true;
+      agentAccountsLastAutoRefresh = Date.now();
+      loadAgentAccounts().finally(() => { agentAccountsAutoRefreshing = false; });
+    }
+  }, 1000);
+}
+
+function renderAgentAccounts(accounts, ordersFailed) {
+  renderAgentAccountsList('agentAccountsList', (accounts || []).filter(a => !isAgentGroup2(a)), ordersFailed);
+  renderAgentAccountsList('agentAccounts2List', (accounts || []).filter(isAgentGroup2), ordersFailed);
+}
+
+function renderAgentAccountsList(listId, accounts, ordersFailed) {
+  const list = document.getElementById(listId);
+  if (!list) return;
+
+  // เก็บสภาพแผง "ຕັ້ງລາຄາສະເພາະ" ที่เปิดอยู่ + ค่าที่พิมพ์ค้างไว้ ก่อน render ใหม่ (รีเฟรชอัตโนมัติ/ค้นหา/ปิด-เปิดตัวแทน)
+  // ไม่งั้น innerHTML ใหม่จะทับแผงจนปิดและค่าที่ยังไม่บันทึกหายหมด
+  const openPanels = {};
+  list.querySelectorAll('.agent-acc-row').forEach(row => {
+    const panel = row.querySelector('.agent-custom-panel');
+    if (!panel || panel.hidden || !panel.querySelector('.agent-custom-input')) return;
+    openPanels[row.dataset.userId] = {
+      saved: Object.fromEntries([...panel.querySelectorAll('.agent-custom-input')]
+        .filter(i => i.dataset.original !== '').map(i => [i.dataset.scope, Number(i.dataset.original)])),
+      typed: Object.fromEntries([...panel.querySelectorAll('.agent-custom-input')].map(i => [i.dataset.scope, i.value])),
+      search: (panel.querySelector('.agent-custom-search') || {}).value || '',
+      scroll: (panel.querySelector('.agent-custom-body') || {}).scrollTop || 0,
+    };
+  });
+
+  const term = agentAccountsSearchTerm.trim().toLowerCase();
+  let filtered = term
+    ? accounts.filter(a => (a.user_email || '').toLowerCase().includes(term) || (a.display_name || '').toLowerCase().includes(term))
+    : accounts;
+  if (agentAccountsFilter === 'active') filtered = filtered.filter(a => a.is_reseller);
+  else if (agentAccountsFilter === 'revoked') filtered = filtered.filter(a => !a.is_reseller);
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty-note">' + (listId === 'agentAccounts2List' ? 'ຍັງບໍ່ມີຕົວແທນ 2 — ຕັ້ງຊື່ໃຫ້ຕົວແທນຈຶ່ງຈະມາຢູ່ນີ້' : 'ບໍ່ພົບຕົວແທນ') + '</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(a => {
+    const isLifetime = a.period_end === null;
+    const quota = Number(a.quota_target) || 0;
+    const spent = a.totalSpent;
+    const isHeld = !!a.quotaReachedAt;
+
+    let progressHtml = '';
+    if (!a.user_email) {
+      progressHtml = `<div class="agent-acc-note">ບໍ່ມີອີເມວບັນທຶກໄວ້ ຈຶ່ງຄິດຍອດຊື້ສະສົມບໍ່ໄດ້</div>`;
+    } else if (ordersFailed || spent === null) {
+      progressHtml = `<div class="agent-acc-note">ບໍ່ສາມາດດຶງຍອດຊື້ສະສົມໄດ້</div>`;
+    } else if (isLifetime || !quota) {
+      progressHtml = `<div class="agent-acc-progress-text">ຍອດຊື້ຮອບນີ້ ${formatKipAdmin(spent)} • ${isLifetime ? 'ຖາວອນ ບໍ່ມີເປົ້າ' : 'ບໍ່ໄດ້ຕັ້ງເປົ້າ'}</div>`;
+    } else {
+      const pct = Math.min(100, Math.round((spent / quota) * 100));
+      progressHtml = `
+        <div class="agent-acc-progress">
+          <div class="agent-acc-bar"><div class="agent-acc-bar-fill ${pct >= 100 ? 'full' : ''}" style="width:${pct}%"></div></div>
+          <span class="agent-acc-progress-text">${formatKipAdmin(spent)} / ${formatKipAdmin(quota)} (${pct}%) · ຮອບນີ້</span>
+        </div>`;
+    }
+    if (isHeld) {
+      progressHtml += `
+        <div class="agent-acc-hold">
+          <span class="agent-acc-live-dot"></span>
+          <span>ຄົບເປົ້າ 100% — ຄ້າງລໍຣີເຊັດ ອີກ <span class="agent-acc-countdown" data-reset="${a.quotaResetAt}">${agentCountdownText(a.quotaResetAt, 'ກຳລັງຣີເຊັດ...')}</span></span>
+        </div>`;
+    }
+
+    const isRevoked = !a.is_reseller;
+    const emailLabel = a.user_email
+      ? escapeHtmlAdmin(a.user_email)
+      : `ບໍ່ມີອີເມວ (user_id: ${escapeHtmlAdmin((a.user_id || '').slice(0, 8))}…)`;
+
+    const expiryHtml = isLifetime
+      ? 'ຖາວອນ ບໍ່ໝົດອາຍຸ'
+      : `ໝົດອາຍຸ <span class="agent-acc-countdown" data-expiry="${a.period_end}">${agentCountdownText(a.period_end, 'ໝົດອາຍຸແລ້ວ')}</span>`;
+
+    return `
+    <div class="agent-acc-row ${isRevoked ? 'is-revoked' : ''}" data-user-id="${escapeHtmlAdmin(a.user_id)}" data-email="${escapeHtmlAdmin(a.user_email || '')}" data-name="${escapeHtmlAdmin(a.display_name || '')}">
+      <div class="agent-acc-head">
+        <div class="agent-acc-title">
+          ${a.display_name ? `<div class="agent-acc-name">${escapeHtmlAdmin(a.display_name)}</div>` : ''}
+          <div class="agent-acc-email">${emailLabel}</div>
+        </div>
+        <span class="agent-state ${isRevoked ? 'off' : 'on'}">${isRevoked ? 'ຖືກປິດ' : 'ທຳງານຢູ່'}</span>
+      </div>
+      <div class="agent-acc-meta">
+        <span class="agent-acc-tier">ລະດັບ ${tierLabel(a.duration_type)}</span>
+        ${isRevoked ? '' : `<span>${expiryHtml}</span>`}
+      </div>
+      ${isRevoked ? '' : progressHtml}
+      <div class="agent-acc-foot">${a.code ? `ຄີຍ໌ ${escapeHtmlAdmin(a.code)} · ` : ''}ປົດລັອກ ${shortDateTime(a.period_start)}</div>
+      <div class="agent-acc-actions">
+        <button type="button" class="agent-acc-custom-btn" data-user-id="${escapeHtmlAdmin(a.user_id)}">ຕັ້ງລາຄາສະເພາະ</button>
+        <button type="button" class="agent-acc-toggle-btn ${isRevoked ? 'is-revoked' : ''}" data-user-id="${a.user_id}" data-next="${isRevoked ? 'true' : 'false'}">
+          ${isRevoked ? 'ເປີດຄືນ' : 'ປິດຕົວແທນ'}
+        </button>
+        <button type="button" class="agent-acc-name-btn" data-user-id="${escapeHtmlAdmin(a.user_id)}">${a.display_name ? 'ແກ້ໄຂຊື່' : 'ຕັ້ງຊື່'}</button>
+        ${isRevoked ? `<button type="button" class="agent-acc-delete-btn" data-user-id="${escapeHtmlAdmin(a.user_id)}">ລຶບບັນຊີຕົວແທນ</button>` : ''}
+      </div>
+      <div class="agent-custom-panel" hidden></div>
+    </div>`;
+  }).join('');
+  updateAgentAccountsCountdowns();
+
+  list.querySelectorAll('.agent-acc-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleAgentStatus(btn));
+  });
+  list.querySelectorAll('.agent-acc-custom-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleAgentCustomPanel(btn));
+  });
+  list.querySelectorAll('.agent-acc-name-btn').forEach(btn => {
+    btn.addEventListener('click', () => renameAgentAccount(btn));
+  });
+  list.querySelectorAll('.agent-acc-delete-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteAgentAccount(btn));
+  });
+
+  // คืนแผงที่เปิดอยู่พร้อมค่าที่พิมพ์ค้างไว้
+  list.querySelectorAll('.agent-acc-row').forEach(row => {
+    const st = openPanels[row.dataset.userId];
+    const panel = row.querySelector('.agent-custom-panel');
+    if (!st || !panel) return;
+    panel.hidden = false;
+    const btn = row.querySelector('.agent-acc-custom-btn');
+    if (btn) btn.classList.add('is-open');
+    renderAgentCustomPanel(panel, row.dataset.userId, st.saved);
+    panel.querySelectorAll('.agent-custom-input').forEach(i => {
+      if (st.typed[i.dataset.scope] !== undefined) i.value = st.typed[i.dataset.scope];
+    });
+    const search = panel.querySelector('.agent-custom-search');
+    if (search && st.search) { search.value = st.search; search.dispatchEvent(new Event('input')); }
+    const body = panel.querySelector('.agent-custom-body');
+    if (body) body.scrollTop = st.scroll;
+  });
+}
+
+// ---------- ລາຄາສະເພາະຕົວແທນລາຍຄົນ (reseller_custom_prices) ----------
+// ແອດມິນຕັ້ງໄດ້ວ່າ "ຕົວແທນຄົນນີ້" ໄດ້ລາຄາໃດຕໍ່ສິນຄ້າ/ໄລຍະເວລາໃດ — ລຳດັບສິດທິລາຄາຕອນຊື້:
+//   1) ລາຄາສະເພາະຄົນ (ຕາຕະລາງນີ້)  2) reseller_price ທົ່ວໄປຂອງສິນຄ້າ  3) ລາຄາປົກກະຕິ − ສ່ວນຫຼຸດ % ຂອງລະດັບ
+// scope_key: 'p:<product_id>' ສຳລັບສິນຄ້າທຳມະດາ, 'd:<duration_id>' ສຳລັບສິນຄ້າທີ່ມີໄລຍະເວລາ
+// ຕ້ອງແລ່ນ agent-custom-prices.sql ໃນ Supabase ກ່ອນ (ແລະຕໍ່ get_effective_price ຕາມຄຳແນະນຳໃນໄຟລ໌ນັ້ນ)
+async function toggleAgentCustomPanel(btn) {
+  const row = btn.closest('.agent-acc-row');
+  const panel = row && row.querySelector('.agent-custom-panel');
+  if (!panel) return;
+
+  if (!panel.hidden) {
+    panel.hidden = true;
+    btn.classList.remove('is-open');
+    return;
+  }
+  panel.hidden = false;
+  btn.classList.add('is-open');
+  panel.innerHTML = '<div class="empty-note">ກຳລັງໂຫຼດ...</div>';
+
+  const userId = row.dataset.userId;
+  const { data, error } = await supabaseClient
+    .from('reseller_custom_prices')
+    .select('scope_key,price')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error(error);
+    panel.innerHTML = '<div class="empty-note">ໂຫຼດບໍ່ສຳເລັດ — ກວດວ່າໄດ້ແລ່ນ agent-custom-prices.sql ໃນ Supabase ແລ້ວຫຼືຍັງ</div>';
+    return;
+  }
+
+  const saved = {};
+  (data || []).forEach(r => { saved[r.scope_key] = r.price; });
+  renderAgentCustomPanel(panel, userId, saved);
+}
+
+function renderAgentCustomPanel(panel, userId, saved) {
+  const products = (currentProducts || []).filter(p => !p.archived);
+  if (!products.length) {
+    panel.innerHTML = '<div class="empty-note">ຍັງບໍ່ມີສິນຄ້າ</div>';
+    return;
+  }
+
+  const priceInput = (scopeKey, val) => `
+    <input type="number" class="agent-custom-input" data-scope="${scopeKey}" data-original="${val ?? ''}"
+           placeholder="ຫວ່າງ = ໃຊ້ລາຄາຕົວແທນທົ່ວໄປ" value="${val ?? ''}" min="0" step="1">`;
+
+  const generalHint = (base, resellerPrice) =>
+    resellerPrice !== null && resellerPrice !== undefined && resellerPrice !== ''
+      ? `ຕົວແທນທົ່ວໄປ ${formatKipAdmin(resellerPrice)}`
+      : 'ຕົວແທນທົ່ວໄປ: ຕາມ % ສ່ວນຫຼຸດ';
+
+  const byCat = {};
+  products.forEach(p => {
+    const cs = splitCats(p.category);
+    (cs.length ? cs : ['ອື່ນໆ']).forEach(c => { (byCat[c] = byCat[c] || []).push(p); });
+  });
+
+  const body = Object.keys(byCat).map(cat => {
+    const items = byCat[cat].map(p => {
+      const name = escapeHtmlAdmin(p.name || '');
+      if (p.duration_enabled) {
+        const rows = (p.durations || []).map(d => `
+          <div class="agent-custom-row">
+            <div class="agent-custom-label">${escapeHtmlAdmin(d.label || '')}
+              <span class="price-dur-base">(ປົກກະຕິ ${formatKipAdmin(d.price)} • ${generalHint(d.price, d.reseller_price)})</span>
+            </div>
+            ${priceInput('d:' + d.id, saved['d:' + d.id])}
+          </div>`).join('');
+        return `<div class="agent-custom-prod" data-name="${name.toLowerCase()}"><div class="agent-custom-prod-name">${name}</div>${rows}</div>`;
+      }
+      return `
+        <div class="agent-custom-prod" data-name="${name.toLowerCase()}">
+          <div class="agent-custom-row">
+            <div class="agent-custom-label">${name}
+              <span class="price-dur-base">(ປົກກະຕິ ${formatKipAdmin(p.price)} • ${generalHint(p.price, p.reseller_price)})</span>
+            </div>
+            ${priceInput('p:' + p.id, saved['p:' + p.id])}
+          </div>
+        </div>`;
+    }).join('');
+    return `<div class="agent-custom-cat"><div class="agent-custom-cat-title">${escapeHtmlAdmin(cat)}</div>${items}</div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="agent-custom-note">ໃສ່ລາຄາສຸດທ້າຍທີ່ຕົວແທນຄົນນີ້ຈະຈ່າຍ (ກີບ) — ເວັ້ນຫວ່າງ = ໃຊ້ລາຄາຕົວແທນທົ່ວໄປຕາມເດີມ, ລຶບຕົວເລກອອກແລ້ວບັນທຶກ = ຍົກເລີກລາຄາສະເພາະ</div>
+    <input type="text" class="agent-custom-search" placeholder="ຄົ້ນຫາສິນຄ້າ...">
+    <div class="agent-custom-body">${body}</div>
+    <button type="button" class="gx-submit agent-custom-save"><span class="gx-spinner"></span><span class="gx-submit-label">ບັນທຶກລາຄາສະເພາະຕົວແທນນີ້</span></button>`;
+
+  panel.querySelector('.agent-custom-search').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    panel.querySelectorAll('.agent-custom-prod').forEach(el => {
+      el.style.display = !q || el.dataset.name.includes(q) ? '' : 'none';
+    });
+  });
+  panel.querySelector('.agent-custom-save').addEventListener('click', (e) => saveAgentCustomPrices(panel, userId, e.currentTarget));
+}
+
+async function saveAgentCustomPrices(panel, userId, btn) {
+  const upserts = [];
+  const removes = [];
+
+  for (const input of panel.querySelectorAll('.agent-custom-input')) {
+    const scope = input.dataset.scope;
+    const val = input.value.trim();
+    const hadOriginal = input.dataset.original !== '';
+    if (val === '') {
+      if (hadOriginal) removes.push(scope);
+      continue;
+    }
+    const price = Number(val);
+    if (!Number.isFinite(price) || price < 0) {
+      showToast('ລາຄາບໍ່ຖືກຕ້ອງ — ຕ້ອງເປັນຕົວເລກ 0 ຂຶ້ນໄປ');
+      input.focus();
+      return;
+    }
+    if (String(price) === input.dataset.original) continue; // ບໍ່ປ່ຽນ
+    const isDur = scope.startsWith('d:');
+    const id = scope.slice(2);
+    upserts.push({
+      user_id: userId,
+      scope_key: scope,
+      product_id: isDur ? null : id,
+      duration_id: isDur ? id : null,
+      price,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  if (!upserts.length && !removes.length) {
+    showToast('ບໍ່ມີການປ່ຽນແປງ');
+    return;
+  }
+
+  setLoading(btn, true);
+  try {
+    if (upserts.length) {
+      const { error } = await supabaseClient
+        .from('reseller_custom_prices')
+        .upsert(upserts, { onConflict: 'user_id,scope_key' });
+      if (error) throw error;
+    }
+    if (removes.length) {
+      const { error } = await supabaseClient
+        .from('reseller_custom_prices')
+        .delete()
+        .eq('user_id', userId)
+        .in('scope_key', removes);
+      if (error) throw error;
+    }
+    showToast('ບັນທຶກລາຄາສະເພາະຕົວແທນສຳເລັດແລ້ວ');
+    // ໂຫຼດຄ່າໃໝ່ເຂົ້າຊ່ອງ (ໃຫ້ data-original ອັບເດດ)
+    const { data } = await supabaseClient.from('reseller_custom_prices').select('scope_key,price').eq('user_id', userId);
+    const saved = {};
+    (data || []).forEach(r => { saved[r.scope_key] = r.price; });
+    renderAgentCustomPanel(panel, userId, saved);
+  } catch (err) {
+    console.error(err);
+    showToast('ບັນທຶກບໍ່ສຳເລັດ: ' + (err.message || err));
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+
+async function toggleAgentStatus(btn) {
+  const userId = btn.dataset.userId;
+  const nextIsReseller = btn.dataset.next === 'true';
+  const row = btn.closest('.agent-acc-row');
+  const email = row ? row.dataset.email : '';
+  const label = email || userId;
+  const confirmMsg = !nextIsReseller
+    ? `ຢືນຢັນປິດສິດຕົວແທນຂອງ "${label}"? ລາຄາຕົວແທນຂອງຄົນນີ້ຈະຖືກຕັດທັນທີ`
+    : `ຢືນຢັນເປີດສິດຕົວແທນຂອງ "${label}" ຄືນ?`;
+  if (!window.confirm(confirmMsg)) return;
+
+  btn.disabled = true;
+  const { error } = await supabaseClient
+    .from('reseller_status')
+    .update({ is_reseller: nextIsReseller, updated_at: new Date().toISOString() })
+    .eq('user_id', userId);
+  btn.disabled = false;
+
+  if (error) {
+    console.error(error);
+    showToast('ປ່ຽນສະຖານະບໍ່ສຳເລັດ: ' + error.message);
+    return;
+  }
+  showToast(nextIsReseller ? 'ເປີດສິດຕົວແທນຄືນແລ້ວ' : 'ປິດສິດຕົວແທນແລ້ວ');
+  await loadAgentAccounts();
+}
+
+// ---------- ຕັ້ງຊື່ຕົວແທນ (reseller_status.display_name) ----------
+// ຊື່ເອີ້ນທີ່ແອດມິນຕັ້ງເອງ (ເຊັ່ນ "ຮ້ານພີ່ເອ") ສະແດງຄູ່ກັບອີເມວໃນລາຍຊື່ — ບໍ່ກະທົບສິດ/ລາຄາ/ການຊື້ ແລະ ຄົ້ນຫາດ້ວຍຊື່ໄດ້
+// ປ່ອຍວ່າງແລ້ວບັນທຶກ = ລຶບຊື່ອອກ ; ບໍ່ອັບເດດ updated_at ເພື່ອບໍ່ໃຫ້ແຖວເດ້ງຂຶ້ນເທິງສຸດຍ້ອນແຄ່ປ່ຽນຊື່
+const AGENT_NAME_MAX = 40;
+async function renameAgentAccount(btn) {
+  const userId = btn.dataset.userId;
+  if (!userId) return;
+  const row = btn.closest('.agent-acc-row');
+  const current = row ? (row.dataset.name || '') : '';
+  const email = row ? row.dataset.email : '';
+
+  const input = window.prompt(
+    `ຕັ້ງຊື່ຕົວແທນ${email ? ' (' + email + ')' : ''}\nສູງສຸດ ${AGENT_NAME_MAX} ຕົວອັກສອນ — ປ່ອຍວ່າງ = ລຶບຊື່ອອກ`,
+    current
+  );
+  if (input === null) return; // ກົດຍົກເລີກ
+
+  const name = input.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if ([...name].length > AGENT_NAME_MAX) {
+    showToast(`ຊື່ຍາວເກີນໄປ (ສູງສຸດ ${AGENT_NAME_MAX} ຕົວອັກສອນ)`);
+    return;
+  }
+  if (name === current) {
+    showToast('ບໍ່ມີການປ່ຽນແປງ');
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const { data, error } = await supabaseClient
+      .from('reseller_status')
+      .update({ display_name: name || null })
+      .eq('user_id', userId)
+      .select('user_id');
+
+    if (error) {
+      console.error(error);
+      showToast('ບັນທຶກຊື່ບໍ່ສຳເລັດ: ' + error.message);
+      return;
+    }
+    if (!data || !data.length) {
+      showToast('ບັນທຶກບໍ່ໄດ້ — ບໍ່ພົບຕົວແທນນີ້ (ອາດຖືກລຶບໄປແລ້ວ)');
+    } else {
+      showToast(name ? 'ບັນທຶກຊື່ແລ້ວ' : 'ລຶບຊື່ແລ້ວ');
+    }
+    await loadAgentAccounts();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- ລຶບບັນຊີຕົວແທນທີ່ຖືກປິດແລ້ວ ----------
+// ລຶບໄດ້ສະເພາະຕົວແທນທີ່ "ຖືກປິດ" (is_reseller = false) ເທົ່ານັ້ນ — ກັນລຶບຕົວແທນທີ່ຍັງທຳງານຢູ່ໂດຍບັງເອີນ
+// ຂັ້ນຕອນ: 1) ລຶບແຖວໃນ reseller_status (ມີເງື່ອນໄຂ is_reseller=false ຢູ່ຝັ່ງຖານຂໍ້ມູນຊ້ຳອີກຊັ້ນ)
+//          2) ລຶບລາຄາສະເພາະຂອງຄົນນັ້ນໃນ reseller_custom_prices (ຕາຕະລາງນີ້ບໍ່ມີ foreign key ຜູກກັບ reseller_status)
+// ບໍ່ລຶບ reseller_keys (ປະຫວັດຄີຍ໌ທີ່ໃຊ້ແລ້ວ) — ຄີຍ໌ເດີມຈຶ່ງໃຊ້ຊ້ຳບໍ່ໄດ້ ແລະ ປະຫວັດຍັງຢູ່ຄົບ
+async function deleteAgentAccount(btn) {
+  const userId = btn.dataset.userId;
+  if (!userId) return;
+  const row = btn.closest('.agent-acc-row');
+  const email = row ? row.dataset.email : '';
+  const label = email || userId;
+
+  if (!window.confirm(
+    `ລຶບບັນຊີຕົວແທນ "${label}" ຖາວອນ?\n\n` +
+    `• ຈະລຶບຂໍ້ມູນຕົວແທນ ແລະ ລາຄາສະເພາະຂອງຄົນນີ້ທັງໝົດ\n` +
+    `• ບັນຊີລູກຄ້າ/ປະຫວັດການສັ່ງຊື້ ບໍ່ຖືກລຶບ\n` +
+    `• ກູ້ຄືນບໍ່ໄດ້`
+  )) return;
+
+  btn.disabled = true;
+  try {
+    // 1) ລຶບແຖວຕົວແທນ — ສະເພາະທີ່ຖືກປິດຢູ່ເທົ່ານັ້ນ ແລະ ຂໍແຖວທີ່ຖືກລຶບກັບຄືນມາເພື່ອຢືນຢັນວ່າລຶບຈິງ
+    const { data: removed, error } = await supabaseClient
+      .from('reseller_status')
+      .delete()
+      .eq('user_id', userId)
+      .eq('is_reseller', false)
+      .select('user_id');
+
+    if (error) {
+      console.error(error);
+      showToast('ລຶບບັນຊີຕົວແທນບໍ່ສຳເລັດ: ' + error.message);
+      return;
+    }
+    if (!removed || !removed.length) {
+      // ບໍ່ມີແຖວຖືກລຶບ = ຕົວແທນນີ້ຖືກເປີດຄືນແລ້ວ ຫຼື ຖືກລຶບໄປກ່ອນແລ້ວ
+      showToast('ລຶບບໍ່ໄດ້ — ຕົວແທນນີ້ອາດຖືກເປີດຄືນ ຫຼື ຖືກລຶບໄປແລ້ວ');
+      await loadAgentAccounts();
+      return;
+    }
+
+    // 2) ລຶບລາຄາສະເພາະ (ເຮັດຫຼັງຈາກຢືນຢັນວ່າລຶບແຖວຕົວແທນແລ້ວ ເພື່ອບໍ່ໃຫ້ລາຄາຂອງຕົວແທນທີ່ຍັງຢູ່ຫາຍໄປ)
+    const { error: priceErr } = await supabaseClient
+      .from('reseller_custom_prices')
+      .delete()
+      .eq('user_id', userId);
+    if (priceErr) {
+      console.error(priceErr);
+      showToast('ລຶບບັນຊີແລ້ວ ແຕ່ລຶບລາຄາສະເພາະບໍ່ສຳເລັດ: ' + priceErr.message);
+    } else {
+      showToast('ລຶບບັນຊີຕົວແທນແລ້ວ');
+    }
+    await loadAgentAccounts();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+
+// ---------- ແທັບໝວດໝູ່ຢູ່ເທິງ "ຕັ້ງລາຄາຕົວແທນລາຍສິນຄ້າ" ----------
+// ຈື່ໝວດໝູ່ທີ່ກຳລັງເລືອກໄວ້ ເພື່ອບໍ່ໃຫ້ຄືນກັບໄປແທັບທຳອິດທຸກຄັ້ງທີ່ໂຫຼດຂໍ້ມູນໃໝ່ (ເຊັ່ນ ຫຼັງບັນທຶກລາຄາ)
+let agentPriceActiveCategory = null;
+let currentAgentPriceProducts = [];
+
+function renderAgentPriceList(products) {
+  const list = document.getElementById('agentPriceList');
+  const tabsHost = document.getElementById('agentPriceCatTabs');
+  if (!list) return;
+
+  const activeProducts = (products || []).filter(p => !p.archived);
+  currentAgentPriceProducts = activeProducts;
+
+  if (!activeProducts.length) {
+    if (tabsHost) tabsHost.innerHTML = '';
+    list.innerHTML = '<div class="empty-note">ຍັງບໍ່ມີສິນຄ້າ — ເພີ່ມສິນຄ້າກ່ອນທີ່ແຖບ "ເພີ່ມສິນຄ້າ"</div>';
+    return;
+  }
+
+  // ໝວດໝູ່ຈິງທີ່ຮ້ານຕັ້ງໄວ້ (category_1_name..4) + ໝວດໝູ່ອື່ນທີ່ອາດຕິດມາກັບສິນຄ້າເກົ່າ — ສະແດງສະເພາະອັນທີ່ມີສິນຄ້າຢູ່ຈິງ
+  const knownNames = getCurrentCategoryNames();
+  const productCats = [...new Set(activeProducts.flatMap(p => splitCats(p.category)))];
+  const orderedNames = [...knownNames, ...productCats.filter(c => !knownNames.includes(c))];
+
+  const catsWithCount = orderedNames
+    .map(name => ({ name, count: activeProducts.filter(p => productHasCat(p, name)).length }))
+    .filter(c => c.count > 0);
+
+  if (!catsWithCount.length) {
+    if (tabsHost) tabsHost.innerHTML = '';
+    list.innerHTML = '<div class="empty-note">ຍັງບໍ່ມີສິນຄ້າໃນໝວດໝູ່ໃດເລີຍ — ເພີ່ມສິນຄ້າແລ້ວກຳນົດໝວດໝູ່ກ່ອນ</div>';
+    return;
+  }
+
+  if (!agentPriceActiveCategory || !catsWithCount.some(c => c.name === agentPriceActiveCategory)) {
+    agentPriceActiveCategory = catsWithCount[0].name;
+  }
+
+  if (tabsHost) {
+    tabsHost.innerHTML = catsWithCount.map(c => `
+      <div class="agent-cat-tab ${c.name === agentPriceActiveCategory ? 'active' : ''}" data-cat="${c.name.replace(/"/g, '&quot;')}">
+        <span class="agent-cat-name">${c.name}</span>
+        <span class="agent-cat-count">${c.count} ລາຍການ</span>
+      </div>
+    `).join('');
+
+    tabsHost.querySelectorAll('.agent-cat-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        agentPriceActiveCategory = tab.dataset.cat;
+        renderAgentPriceList(currentAgentPriceProducts);
+      });
+    });
+  }
+
+  const shownProducts = activeProducts.filter(p => productHasCat(p, agentPriceActiveCategory));
+
+  const saveBtnHtml = `
+        <button type="button" class="gx-submit price-save-btn">
+          <span class="gx-spinner"></span>
+          <span class="gx-submit-label">ບັນທຶກ</span>
+        </button>`;
+
+  list.innerHTML = shownProducts.map(p => {
+    const name = escapeHtmlAdmin(p.name || '');
+    if (p.duration_enabled) {
+      return `
+      <div class="price-prod-card" data-product-id="${p.id}">
+        <div class="price-prod-head"><div class="price-prod-name">${name}</div></div>
+        <div class="price-dur-list">
+          ${(p.durations || []).map(d => `
+            <div class="price-dur-row" data-duration-id="${d.id}">
+              <div class="price-dur-label"><b>${escapeHtmlAdmin(d.label)}</b><span class="price-dur-base">ປົກກະຕິ ${formatKipAdmin(d.price)}</span></div>
+              <div class="price-input"><input type="number" class="edit-reseller-price" placeholder="ຕາມ % ສ່ວນຫຼຸດ" value="${d.reseller_price ?? ''}" min="0" step="1" inputmode="numeric"><i>ກີບ</i></div>
+              <div class="price-input price-input-2"><input type="number" class="edit-reseller-price-2" placeholder="ຕົວແທນ 2 (ຖ້າບໍ່ໃສ່ ໃຊ້ລາຄາຕົວແທນ)" value="${d.reseller_price_2 ?? ''}" min="0" step="1" inputmode="numeric"><i>ກີບ</i></div>
+            </div>
+          `).join('')}
+        </div>
+        ${saveBtnHtml}
+      </div>`;
+    }
+    return `
+      <div class="price-prod-card" data-product-id="${p.id}">
+        <div class="price-prod-head"><div class="price-prod-name">${name}</div></div>
+        <div class="price-dur-row" data-single="true">
+          <div class="price-dur-label"><b>ລາຄາຕົວແທນ</b><span class="price-dur-base">ປົກກະຕິ ${formatKipAdmin(p.price)}</span></div>
+          <div class="price-input"><input type="number" class="edit-reseller-price" placeholder="ຕາມ % ສ່ວນຫຼຸດ" value="${p.reseller_price ?? ''}" min="0" step="1" inputmode="numeric"><i>ກີບ</i></div>
+          <div class="price-input price-input-2"><input type="number" class="edit-reseller-price-2" placeholder="ຕົວແທນ 2 (ຖ້າບໍ່ໃສ່ ໃຊ້ລາຄາຕົວແທນ)" value="${p.reseller_price_2 ?? ''}" min="0" step="1" inputmode="numeric"><i>ກີບ</i></div>
+        </div>
+        ${saveBtnHtml}
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.price-prod-card').forEach(card => {
+    card.querySelector('.price-save-btn').addEventListener('click', () => saveAgentPrices(card));
+  });
+}
+
+async function saveAgentPrices(card) {
+  const btn = card.querySelector('.price-save-btn');
+  const productId = card.dataset.productId;
+  const durRows = card.querySelectorAll('.price-dur-row[data-duration-id]');
+
+  setLoading(btn, true);
+  try {
+    if (durRows.length) {
+      for (const row of durRows) {
+        const durationId = row.dataset.durationId;
+        const input = row.querySelector('.edit-reseller-price');
+        const val = input.value.trim();
+        const resellerPrice = val === '' ? null : Number(val);
+        const val2 = (row.querySelector('.edit-reseller-price-2').value || '').trim();
+        const resellerPrice2 = val2 === '' ? null : Number(val2);
+        const { error } = await supabaseClient
+          .from('product_durations')
+          .update({ reseller_price: resellerPrice, reseller_price_2: resellerPrice2 })
+          .eq('id', durationId);
+        if (error) throw error;
+      }
+    } else {
+      const input = card.querySelector('.price-dur-row[data-single="true"] .edit-reseller-price');
+      const val = input.value.trim();
+      const resellerPrice = val === '' ? null : Number(val);
+      const val2 = (card.querySelector('.price-dur-row[data-single="true"] .edit-reseller-price-2').value || '').trim();
+      const resellerPrice2 = val2 === '' ? null : Number(val2);
+      const { error } = await supabaseClient
+        .from('products')
+        .update({ reseller_price: resellerPrice, reseller_price_2: resellerPrice2 })
+        .eq('id', productId);
+      if (error) throw error;
+    }
+    showToast('ບັນທຶກລາຄາຕົວແທນສຳເລັດແລ້ວ');
+    await loadProducts();
+  } catch (err) {
+    console.error(err);
+    showToast('ບັນທຶກບໍ່ສຳເລັດ: ' + err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function openSlipLightbox(src) {
+  const lb = document.getElementById('slipLightbox');
+  document.getElementById('slipLightboxImg').src = src;
+  lb.classList.add('show');
+}
+
+function closeSlipLightbox() {
+  document.getElementById('slipLightbox').classList.remove('show');
+}
+
+// ============================================
+// ຕັ້ງຄ່າຮ້ານ — ຊື່ຮ້ານ / ຄຳອະທິບາຍ / ຂໍ້ຄວາມປະກາດ / ຊື່ໝວດໝູ່ / ໂລໂກ້ / QR
+// ຕ້ອງແລ່ນ site_settings_setup.sql ໃນ Supabase ກ່ອນ (ສ້າງຕາຕະລາງ site_settings ແລະ bucket site-assets)
+// ============================================
+const SITE_SETTINGS_TABLE = 'site_settings';
+const SITE_SETTINGS_ID = 1;
+
+// ຖ້າຍັງບໍ່ມີແຖວການຕັ້ງຄ່າ (ຄັ້ງທຳອິດ) ໃຫ້ສ້າງແຖວຄ່າຕັ້ງຕົ້ນຂຶ້ນມາກ່ອນ
+async function ensureSiteSettingsRow() {
+  const { data, error } = await supabaseClient
+    .from(SITE_SETTINGS_TABLE)
+    .select('id')
+    .eq('id', SITE_SETTINGS_ID)
+    .maybeSingle();
+  if (!error && !data) {
+    await supabaseClient.from(SITE_SETTINGS_TABLE).insert({ id: SITE_SETTINGS_ID });
+  }
+}
+
+function fillDropzonePreview(zoneId, textId, inputId, url) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  if (!zone || !input || !url) return;
+  zone.classList.add('has-image');
+  const textEl = document.getElementById(textId);
+  if (textEl) textEl.remove();
+  let img = zone.querySelector('img');
+  if (!img) {
+    img = document.createElement('img');
+    zone.insertBefore(img, input);
+  }
+  img.src = url;
+}
+
+// ຄືກັນກັບ fillDropzonePreview ແຕ່ຮອງຮັບກໍລະນີ "ລຶບຮູບອອກແລ້ວ" ນຳ (ຄືນ dropzone ກັບໄປເປັນ placeholder ເລີ່ມຕົ້ນ)
+// ໃຊ້ກັບຮູບໝວດໝູ່ ເພາະສາມາດຖືກລຶບອອກໄດ້ (ຕ່າງຈາກໂລໂກ້/QR ທີ່ມີແຕ່ "ປ່ຽນຮູບ")
+function resetDropzoneIfEmpty(zoneId, textId, inputId, url, placeholderMsg) {
+  const zone = document.getElementById(zoneId);
+  if (!zone) return;
+  if (url) {
+    fillDropzonePreview(zoneId, textId, inputId, url);
+    return;
+  }
+  zone.classList.remove('has-image');
+  const img = zone.querySelector('img');
+  if (img) img.remove();
+  if (!document.getElementById(textId)) {
+    const span = document.createElement('span');
+    span.id = textId;
+    span.textContent = placeholderMsg;
+    const input = document.getElementById(inputId);
+    zone.insertBefore(span, input || null);
+  }
+}
+
+function loadSiteSettingsIntoForm(settings) {
+  const nameInput = document.getElementById('settingStoreName');
+  const taglineInput = document.getElementById('settingTagline');
+  const announceInput = document.getElementById('settingAnnouncement');
+  const socialFacebookInput = document.getElementById('settingSocialFacebook');
+  const socialDiscordInput = document.getElementById('settingSocialDiscord');
+  const socialLineInput = document.getElementById('settingSocialLine');
+  const socialTelegramInput = document.getElementById('settingSocialTelegram');
+  const socialWhatsappInput = document.getElementById('settingSocialWhatsapp');
+  const qrLabel1Input = document.getElementById('settingQrLabel1');
+  const qrLabel2Input = document.getElementById('settingQrLabel2');
+  const qrLabel3Input = document.getElementById('settingQrLabel3');
+  const qrLabel4Input = document.getElementById('settingQrLabel4');
+  [1, 2, 3, 4].forEach((n) => {
+    [['settingQrSub', 'qr_sub_'], ['settingQrBadge', 'qr_badge_']].forEach(([id, col]) => {
+      const el = document.getElementById(id + n);
+      if (el && document.activeElement !== el) el.value = settings[col + n] || '';
+    });
+    const autoEl = document.getElementById('qrAuto' + n);
+    if (autoEl && document.activeElement !== autoEl) autoEl.checked = n === 1 ? settings.qr_auto_1 !== false : settings['qr_auto_' + n] === true;
+    fillDropzonePreview('qrIconDropZone' + n, 'qrIconDropZoneText' + n, 'qrIconInput' + n, settings['qr_icon_' + n] || ('assets/qr-icon-' + n + '.png'));
+  });
+
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = settings.store_name || '';
+  if (taglineInput && document.activeElement !== taglineInput) taglineInput.value = settings.tagline || '';
+  if (announceInput && document.activeElement !== announceInput) announceInput.value = settings.announcement_text || '';
+  if (socialFacebookInput && document.activeElement !== socialFacebookInput) socialFacebookInput.value = settings.social_facebook || '';
+  if (socialDiscordInput && document.activeElement !== socialDiscordInput) socialDiscordInput.value = settings.social_discord || '';
+  if (socialLineInput && document.activeElement !== socialLineInput) socialLineInput.value = settings.social_line || '';
+  if (socialTelegramInput && document.activeElement !== socialTelegramInput) socialTelegramInput.value = settings.social_telegram || '';
+  if (socialWhatsappInput && document.activeElement !== socialWhatsappInput) socialWhatsappInput.value = settings.social_whatsapp || '';
+  if (qrLabel1Input && document.activeElement !== qrLabel1Input) qrLabel1Input.value = settings.qr_label || '';
+  if (qrLabel2Input && document.activeElement !== qrLabel2Input) qrLabel2Input.value = settings.qr_label_2 || '';
+  if (qrLabel3Input && document.activeElement !== qrLabel3Input) qrLabel3Input.value = settings.qr_label_3 || '';
+  if (qrLabel4Input && document.activeElement !== qrLabel4Input) qrLabel4Input.value = settings.qr_label_4 || '';
+
+  // ໝວດໝູ່ 1-4: ຊື່ + ຮູບພາບ (ໜ້າຮ້ານຈິງມີ 4 ກາຕູນຄົງທີ່)
+  for (let i = 1; i <= 4; i++) {
+    const nameInputEl = document.getElementById(`catName${i}`);
+    if (nameInputEl && document.activeElement !== nameInputEl) {
+      nameInputEl.value = settings[`category_${i}_name`] || '';
+    }
+    const tagInputEl = document.getElementById(`catTag${i}`);
+    if (tagInputEl && document.activeElement !== tagInputEl) {
+      tagInputEl.value = settings[`category_${i}_tag`] || '';
+    }
+    const titleInputEl = document.getElementById(`catTitle${i}`);
+    if (titleInputEl && document.activeElement !== titleInputEl) {
+      titleInputEl.value = settings[`category_${i}_title`] || '';
+    }
+    const descInputEl = document.getElementById(`catDesc${i}`);
+    if (descInputEl && document.activeElement !== descInputEl) {
+      descInputEl.value = settings[`category_${i}_desc`] || '';
+    }
+    resetDropzoneIfEmpty(
+      `catImgDrop${i}`, `catImgDropText${i}`, `catImgInput${i}`,
+      settings[`category_${i}_image`],
+      'ແຕະເພື່ອເລືອກຮູບໝວດໝູ່ນີ້ (ອັບໂຫລດອັດຕະໂນມັດ)'
+    );
+    // ເປີດ/ປິດ ໝວດໝູ່ນີ້ (category_{i}_enabled) — ຄ່າເລີ່ມຕົ້ນ = ເປີດ ຖ້າຍັງບໍ່ເຄີຍຕັ້ງ (null/undefined)
+    const enabledInputEl = document.getElementById(`catEnabled${i}`);
+    if (enabledInputEl && document.activeElement !== enabledInputEl) {
+      const isEnabled = settings[`category_${i}_enabled`] !== false;
+      enabledInputEl.checked = isEnabled;
+      updateCategoryEnableStateLabel(i, isEnabled);
+    }
+  }
+
+  fillDropzonePreview('logoDropZone', 'logoDropZoneText', 'logoInput', settings.logo_url);
+  fillDropzonePreview('qrDropZone', 'qrDropZoneText', 'qrInput', settings.qr_url);
+  if (settings.qr_url && !selectedQrFile) checkQrSupport(1, settings.qr_url);
+  fillDropzonePreview('qrDropZone2', 'qrDropZoneText2', 'qrInput2', settings.qr_url_2);
+  if (settings.qr_url_2 && !selectedQrFile2) checkQrSupport(2, settings.qr_url_2);
+  fillDropzonePreview('qrDropZone3', 'qrDropZoneText3', 'qrInput3', settings.qr_url_3);
+  if (settings.qr_url_3 && !selectedQrFile3) checkQrSupport(3, settings.qr_url_3);
+  fillDropzonePreview('qrDropZone4', 'qrDropZoneText4', 'qrInput4', settings.qr_url_4);
+  if (settings.qr_url_4 && !selectedQrFile4) checkQrSupport(4, settings.qr_url_4);
+  resetDropzoneIfEmpty(
+    'heroImageDropZone', 'heroImageDropZoneText', 'heroImageInput',
+    settings.hero_image,
+    'ແຕະເພື່ອເລືອກຮູບ hero ໜ້າຫຼັກ (ອັບໂຫລດອັດຕະໂນມັດ)'
+  );
+
+  const promoPopupEnabledInput = document.getElementById('promoPopupEnabled');
+  if (promoPopupEnabledInput && document.activeElement !== promoPopupEnabledInput) {
+    promoPopupEnabledInput.checked = !!settings.promo_popup_enabled;
+  }
+  resetDropzoneIfEmpty(
+    'promoPopupImageDropZone', 'promoPopupImageDropZoneText', 'promoPopupImageInput',
+    settings.promo_popup_image,
+    'ແຕະເພື່ອເລືອກຮູບໂປຣໂມຊັ່ນ (ອັບໂຫລດອັດຕະໂນມັດ)'
+  );
+}
+
+async function loadSiteSettingsAdmin() {
+  try {
+    const { data, error } = await supabaseClient
+      .from(SITE_SETTINGS_TABLE)
+      .select('*')
+      .eq('id', SITE_SETTINGS_ID)
+      .maybeSingle();
+    if (error) throw error;
+    currentSiteSettings = data || {};
+    loadSiteSettingsIntoForm(currentSiteSettings);
+    renderCategoryOptions(currentProducts);
+  } catch (err) {
+    console.error('ໂຫຼດການຕັ້ງຄ່າຮ້ານບໍ່ສຳເລັດ', err);
+  }
+}
+
+async function saveSiteSettingsFields(fields, btn, msgEl, successText) {
+  setLoading(btn, true);
+  setMsg(msgEl, 'ກຳລັງບັນທຶກ...', 'pending');
+  try {
+    await ensureSiteSettingsRow();
+    const { error } = await supabaseClient
+      .from(SITE_SETTINGS_TABLE)
+      .update({ ...fields, updated_at: new Date().toISOString() })
+      .eq('id', SITE_SETTINGS_ID);
+    if (error) throw error;
+    setMsg(msgEl, successText, 'success');
+    await loadSiteSettingsAdmin();
+  } catch (err) {
+    console.error(err);
+    setMsg(msgEl, 'ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function uploadSiteAsset(file, prefix) {
+  file = await compressImageIfLarge(file);
+  const ext = file.name.split('.').pop();
+  const path = `${prefix}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error: uploadError } = await supabaseClient.storage.from('site-assets').upload(path, file);
+  if (uploadError) throw uploadError;
+  const { data: pub } = supabaseClient.storage.from('site-assets').getPublicUrl(path);
+  return pub.publicUrl;
+}
+
+function setupSiteImageDropzone(zoneId, textId, inputId, onSelected) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  if (!zone || !input) return;
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    if (!file) return;
+    onSelected(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      zone.classList.add('has-image');
+      const textEl = document.getElementById(textId);
+      if (textEl) textEl.remove();
+      let img = zone.querySelector('img');
+      if (!img) {
+        img = document.createElement('img');
+        zone.insertBefore(img, input);
+      }
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// ---------- ຮູບພາບປະຈຳໝວດໝູ່ 1-10 — ເລືອກຮູບແລ້ວອັບໂຫລດ+ບັນທຶກອັດຕະໂນມັດທັນທີ (ບໍ່ຕ້ອງກົດປຸ່ມບັນທຶກແຍກ) ----------
+function initCategoryImageDropzones() {
+  for (let i = 1; i <= 4; i++) {
+    const zoneId = `catImgDrop${i}`;
+    const textId = `catImgDropText${i}`;
+    const inputId = `catImgInput${i}`;
+    const removeId = `catImgRemove${i}`;
+    const msgId = `catImgMsg${i}`;
+
+    const zone = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    const removeBtn = document.getElementById(removeId);
+    const msg = document.getElementById(msgId);
+    if (!zone || !input) continue; // ໜ້ານີ້ບໍ່ໄດ້ໃສ່ dropzone ຂອງໝວດນີ້ໄວ້ -> ຂ້າມແບບປອດໄພ
+
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      if (!file) return;
+
+      // ສະແດງຕົວຢ່າງທັນທີຂະນະລໍຖ້າອັບໂຫລດ (ຮູ້ສຶກໄວ, ບໍ່ຕ້ອງລໍຄ້າງໜ້າຈໍ)
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        zone.classList.add('has-image');
+        const textEl = document.getElementById(textId);
+        if (textEl) textEl.remove();
+        let img = zone.querySelector('img');
+        if (!img) { img = document.createElement('img'); zone.insertBefore(img, input); }
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+
+      if (msg) setMsg(msg, 'ກຳລັງອັບໂຫລດ...', 'pending');
+      try {
+        const url = await uploadSiteAsset(file, `category-${i}`);
+        await ensureSiteSettingsRow();
+        const { error } = await supabaseClient
+          .from(SITE_SETTINGS_TABLE)
+          .update({ [`category_${i}_image`]: url, updated_at: new Date().toISOString() })
+          .eq('id', SITE_SETTINGS_ID);
+        if (error) throw error;
+        if (msg) setMsg(msg, 'ບັນທຶກຮູບໝວດໝູ່ນີ້ສຳເລັດແລ້ວ ', 'success');
+        await loadSiteSettingsAdmin();
+      } catch (err) {
+        console.error(err);
+        if (msg) setMsg(msg, 'ອັບໂຫລດບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+      } finally {
+        input.value = '';
+      }
+    });
+
+    if (removeBtn) {
+      removeBtn.addEventListener('click', async () => {
+        if (!confirm('ລຶບຮູບໝວດໝູ່ນີ້ ແລະ ກັບໄປໃຊ້ວິດີໂອຄ່າເລີ່ມຕົ້ນ?')) return;
+        if (msg) setMsg(msg, 'ກຳລັງລຶບ...', 'pending');
+        try {
+          await ensureSiteSettingsRow();
+          const { error } = await supabaseClient
+            .from(SITE_SETTINGS_TABLE)
+            .update({ [`category_${i}_image`]: null, updated_at: new Date().toISOString() })
+            .eq('id', SITE_SETTINGS_ID);
+          if (error) throw error;
+          if (msg) setMsg(msg, 'ລຶບຮູບແລ້ວ', 'success');
+          await loadSiteSettingsAdmin();
+        } catch (err) {
+          console.error(err);
+          if (msg) setMsg(msg, 'ລຶບບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+        }
+      });
+    }
+  }
+}
+
+// ---------- ຮູບ hero ໜ້າຫຼັກ — ເລືອກຮູບແລ້ວອັບໂຫລດ+ບັນທຶກອັດຕະໂນມັດທັນທີ (ຄືກັນກັບຮູບໝວດໝູ່) ----------
+function initHeroImageDropzone() {
+  const zoneId = 'heroImageDropZone';
+  const textId = 'heroImageDropZoneText';
+  const inputId = 'heroImageInput';
+  const removeId = 'heroImageRemoveBtn';
+  const msgId = 'heroImageMsg';
+
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  const removeBtn = document.getElementById(removeId);
+  const msg = document.getElementById(msgId);
+  if (!zone || !input) return;
+
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      zone.classList.add('has-image');
+      const textEl = document.getElementById(textId);
+      if (textEl) textEl.remove();
+      let img = zone.querySelector('img');
+      if (!img) { img = document.createElement('img'); zone.insertBefore(img, input); }
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+
+    if (msg) setMsg(msg, 'ກຳລັງອັບໂຫລດ...', 'pending');
+    try {
+      const url = await uploadSiteAsset(file, 'hero');
+      await ensureSiteSettingsRow();
+      const { error } = await supabaseClient
+        .from(SITE_SETTINGS_TABLE)
+        .update({ hero_image: url, updated_at: new Date().toISOString() })
+        .eq('id', SITE_SETTINGS_ID);
+      if (error) throw error;
+      if (msg) setMsg(msg, 'ບັນທຶກຮູບ hero ສຳເລັດແລ້ວ ', 'success');
+      await loadSiteSettingsAdmin();
+    } catch (err) {
+      console.error(err);
+      if (msg) setMsg(msg, 'ອັບໂຫລດບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+    } finally {
+      input.value = '';
+    }
+  });
+
+  if (removeBtn) {
+    removeBtn.addEventListener('click', async () => {
+      if (!confirm('ລຶບຮູບ hero ນີ້ ແລະ ກັບໄປໃຊ້ວິດີໂອຄ່າເລີ່ມຕົ້ນ?')) return;
+      if (msg) setMsg(msg, 'ກຳລັງລຶບ...', 'pending');
+      try {
+        await ensureSiteSettingsRow();
+        const { error } = await supabaseClient
+          .from(SITE_SETTINGS_TABLE)
+          .update({ hero_image: null, updated_at: new Date().toISOString() })
+          .eq('id', SITE_SETTINGS_ID);
+        if (error) throw error;
+        if (msg) setMsg(msg, 'ລຶບຮູບແລ້ວ', 'success');
+        await loadSiteSettingsAdmin();
+      } catch (err) {
+        console.error(err);
+        if (msg) setMsg(msg, 'ລຶບບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+      }
+    });
+  }
+}
+
+// ---------- ຮູບ popup ໂປຣໂມຊັ່ນ (ໂຊວ໌ຕອນເປີດໜ້າຫຼັກ) — ຄືກັນກັບຮູບ hero (ອັບໂຫລດ+ບັນທຶກອັດຕະໂນມັດທັນທີ) ----------
+function initPromoPopupDropzone() {
+  const zoneId = 'promoPopupImageDropZone';
+  const textId = 'promoPopupImageDropZoneText';
+  const inputId = 'promoPopupImageInput';
+  const removeId = 'promoPopupImageRemoveBtn';
+  const msgId = 'promoPopupImageMsg';
+
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  const removeBtn = document.getElementById(removeId);
+  const msg = document.getElementById(msgId);
+  if (!zone || !input) return;
+
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      zone.classList.add('has-image');
+      const textEl = document.getElementById(textId);
+      if (textEl) textEl.remove();
+      let img = zone.querySelector('img');
+      if (!img) { img = document.createElement('img'); zone.insertBefore(img, input); }
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+
+    if (msg) setMsg(msg, 'ກຳລັງອັບໂຫລດ...', 'pending');
+    try {
+      const url = await uploadSiteAsset(file, 'promo-popup');
+      await ensureSiteSettingsRow();
+      const { error } = await supabaseClient
+        .from(SITE_SETTINGS_TABLE)
+        .update({ promo_popup_image: url, updated_at: new Date().toISOString() })
+        .eq('id', SITE_SETTINGS_ID);
+      if (error) throw error;
+      if (msg) setMsg(msg, 'ບັນທຶກຮູບ popup ໂປຣໂມຊັ່ນສຳເລັດແລ້ວ ', 'success');
+      await loadSiteSettingsAdmin();
+    } catch (err) {
+      console.error(err);
+      if (msg) setMsg(msg, 'ອັບໂຫລດບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+    } finally {
+      input.value = '';
+    }
+  });
+
+  if (removeBtn) {
+    removeBtn.addEventListener('click', async () => {
+      if (!confirm('ລຶບຮູບ popup ໂປຣໂມຊັ່ນນີ້ອອກ?')) return;
+      if (msg) setMsg(msg, 'ກຳລັງລຶບ...', 'pending');
+      try {
+        await ensureSiteSettingsRow();
+        const { error } = await supabaseClient
+          .from(SITE_SETTINGS_TABLE)
+          .update({ promo_popup_image: null, updated_at: new Date().toISOString() })
+          .eq('id', SITE_SETTINGS_ID);
+        if (error) throw error;
+        if (msg) setMsg(msg, 'ລຶບຮູບແລ້ວ', 'success');
+        await loadSiteSettingsAdmin();
+      } catch (err) {
+        console.error(err);
+        if (msg) setMsg(msg, 'ລຶບບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+      }
+    });
+  }
+
+  const enabledInput = document.getElementById('promoPopupEnabled');
+  if (enabledInput) {
+    enabledInput.addEventListener('change', async () => {
+      const nextEnabled = enabledInput.checked;
+      try {
+        await ensureSiteSettingsRow();
+        const { error } = await supabaseClient
+          .from(SITE_SETTINGS_TABLE)
+          .update({ promo_popup_enabled: nextEnabled, updated_at: new Date().toISOString() })
+          .eq('id', SITE_SETTINGS_ID);
+        if (error) throw error;
+        if (msg) setMsg(msg, nextEnabled ? 'ເປີດໃຊ້ງານ popup ແລ້ວ ' : 'ປິດ popup ນີ້ແລ້ວ', 'success');
+        await loadSiteSettingsAdmin();
+      } catch (err) {
+        console.error(err);
+        enabledInput.checked = !nextEnabled; // ບັນທຶກບໍ່ສຳເລັດ -> ຄືນຄ່າ checkbox ກັບຄືນ
+        if (msg) setMsg(msg, 'ບັນທຶກບໍ່ສຳເລັດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+      }
+    });
+  }
+}
+
+function initSiteSettingsPanel() {
+  setupSiteImageDropzone('logoDropZone', 'logoDropZoneText', 'logoInput', (f) => { selectedLogoFile = f; });
+  setupSiteImageDropzone('qrDropZone', 'qrDropZoneText', 'qrInput', (f) => { selectedQrFile = f; checkQrSupport(1, f); });
+  setupSiteImageDropzone('qrDropZone2', 'qrDropZoneText2', 'qrInput2', (f) => { selectedQrFile2 = f; checkQrSupport(2, f); });
+  setupSiteImageDropzone('qrDropZone3', 'qrDropZoneText3', 'qrInput3', (f) => { selectedQrFile3 = f; checkQrSupport(3, f); });
+  setupSiteImageDropzone('qrDropZone4', 'qrDropZoneText4', 'qrInput4', (f) => { selectedQrFile4 = f; checkQrSupport(4, f); });
+  [1, 2, 3, 4].forEach((n) => setupSiteImageDropzone('qrIconDropZone' + n, 'qrIconDropZoneText' + n, 'qrIconInput' + n, (f) => { selectedQrIconFiles[n] = f; }));
+  initCategoryImageDropzones();
+  initHeroImageDropzone();
+  initPromoPopupDropzone();
+  initCategoryNameConfirmButtons();
+  initCategoryTitleDescConfirmButtons();
+  initCategoryEnabledToggles();
+
+  const saveStoreNameBtn = document.getElementById('saveStoreNameBtn');
+  if (saveStoreNameBtn) {
+    saveStoreNameBtn.addEventListener('click', () => {
+      const msg = document.getElementById('storeNameMsg');
+      const name = document.getElementById('settingStoreName').value.trim();
+      if (!name) { setMsg(msg, 'ກະລຸນາໃສ່ຊື່ຮ້ານ', 'error'); return; }
+      saveSiteSettingsFields(
+        { store_name: name }, saveStoreNameBtn, msg,
+        'ບັນທຶກຊື່ຮ້ານສຳເລັດແລ້ວ — ໜ້າຮ້ານຈິງຈະອັບເດດອັດຕະໂນມັດ'
+      );
+    });
+  }
+
+  const saveTaglineBtn = document.getElementById('saveTaglineBtn');
+  if (saveTaglineBtn) {
+    saveTaglineBtn.addEventListener('click', () => {
+      const msg = document.getElementById('taglineMsg');
+      const tagline = document.getElementById('settingTagline').value.trim();
+      saveSiteSettingsFields({ tagline }, saveTaglineBtn, msg, 'ບັນທຶກຄຳອະທິບາຍສຳເລັດແລ້ວ');
+    });
+  }
+
+  const saveCategoryNamesBtn = document.getElementById('saveCategoryNamesBtn');
+  if (saveCategoryNamesBtn) {
+    saveCategoryNamesBtn.addEventListener('click', async () => {
+      const msg = document.getElementById('categoryNamesMsg');
+      const fields = {};
+      const renames = [];
+
+      for (let i = 1; i <= 4; i++) {
+        const input = document.getElementById(`catName${i}`);
+        const val = input ? input.value.trim() : '';
+        const newName = val || `ໝວດໝູ່ ${i}`;
+        const oldName = (
+          currentSiteSettings && currentSiteSettings[`category_${i}_name`]
+            ? String(currentSiteSettings[`category_${i}_name`])
+            : `ໝວດໝູ່ ${i}`
+        ).trim();
+        fields[`category_${i}_name`] = newName;
+        if (oldName && oldName !== newName) {
+          renames.push({ oldName, newName });
+        }
+      }
+
+      // ຖ້າມີການປ່ຽນຊື່ໝວດໝູ່ -> ຕ້ອງອັບເດດສິນຄ້າທຸກອັນທີ່ຍັງໃຊ້ຊື່ເກົ່າ (products.category ເປັນຂໍ້ຄວາມ ບໍ່ແມ່ນ id)
+      // ບໍ່ດັ່ງນັ້ນສິນຄ້າຈະຫຼຸດອອກຈາກໝວດ ແລະ ຕົວເລືອກໝວດໝູ່ຕອນເພີ່ມສິນຄ້າຈະຄ້າງຊື່ເກົ່າໄວ້ຄູ່ກັບຊື່ໃໝ່
+      if (renames.length) {
+        setLoading(saveCategoryNamesBtn, true);
+        setMsg(msg, 'ກຳລັງອັບເດດສິນຄ້າໃນໝວດ...', 'pending');
+        try {
+          for (const r of renames) {
+            await renameCategoryInProducts(r.oldName, r.newName);
+          }
+          await loadProducts(); // ໂຫຼດສິນຄ້າ+ຕົວເລືອກໝວດໝູ່ໃໝ່ ເພື່ອບໍ່ໃຫ້ຄ້າງຊື່ເກົ່າໃນ dropdown
+        } catch (err) {
+          console.error(err);
+          setLoading(saveCategoryNamesBtn, false);
+          setMsg(msg, 'ເກີດຂໍ້ຜິດພາດຕອນອັບເດດສິນຄ້າ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+          return;
+        }
+        setLoading(saveCategoryNamesBtn, false);
+      }
+
+      saveSiteSettingsFields(
+        fields, saveCategoryNamesBtn, msg,
+        'ບັນທຶກຊື່ໝວດໝູ່ທັງໝົດສຳເລັດແລ້ວ — ໜ້າຮ້ານຈິງຈະອັບເດດອັດຕະໂນມັດ'
+      );
+    });
+  }
+
+  const saveAnnouncementBtn = document.getElementById('saveAnnouncementBtn');
+  if (saveAnnouncementBtn) {
+    saveAnnouncementBtn.addEventListener('click', () => {
+      const msg = document.getElementById('announcementMsg');
+      const text = document.getElementById('settingAnnouncement').value.trim();
+      if (!text) { setMsg(msg, 'ກະລຸນາໃສ່ຂໍ້ຄວາມປະກາດ', 'error'); return; }
+      saveSiteSettingsFields({ announcement_text: text }, saveAnnouncementBtn, msg, 'ບັນທຶກຂໍ້ຄວາມປະກາດສຳເລັດແລ້ວ');
+    });
+  }
+
+  const saveSocialLinksBtn = document.getElementById('saveSocialLinksBtn');
+  if (saveSocialLinksBtn) {
+    saveSocialLinksBtn.addEventListener('click', () => {
+      const msg = document.getElementById('socialLinksMsg');
+      const facebook = document.getElementById('settingSocialFacebook').value.trim();
+      const discord = document.getElementById('settingSocialDiscord').value.trim();
+      const line = document.getElementById('settingSocialLine').value.trim();
+      const telegram = document.getElementById('settingSocialTelegram').value.trim();
+      const whatsapp = document.getElementById('settingSocialWhatsapp').value.trim();
+      saveSiteSettingsFields(
+        {
+          social_facebook: facebook || null,
+          social_discord: discord || null,
+          social_line: line || null,
+          social_telegram: telegram || null,
+          social_whatsapp: whatsapp || null
+        },
+        saveSocialLinksBtn, msg,
+        'ບັນທຶກຊ່ອງທາງໂຊເຊียลສຳເລັດແລ້ວ — ໜ້າຮ້ານຈິງຈະອັບເດດອັດຕະໂນມັດ'
+      );
+    });
+  }
+
+  const saveLogoBtn = document.getElementById('saveLogoBtn');
+  if (saveLogoBtn) {
+    saveLogoBtn.addEventListener('click', async () => {
+      const msg = document.getElementById('logoMsg');
+      if (!selectedLogoFile) { setMsg(msg, 'ກະລຸນາເລືອກຮູບໂລໂກ້ກ່ອນ', 'error'); return; }
+      setLoading(saveLogoBtn, true);
+      setMsg(msg, 'ກຳລັງອັບໂຫຼດ...', 'pending');
+      try {
+        const url = await uploadSiteAsset(selectedLogoFile, 'logo');
+        await ensureSiteSettingsRow();
+        const { error } = await supabaseClient
+          .from(SITE_SETTINGS_TABLE)
+          .update({ logo_url: url, updated_at: new Date().toISOString() })
+          .eq('id', SITE_SETTINGS_ID);
+        if (error) throw error;
+        setMsg(msg, 'ປ່ຽນໂລໂກ້ສຳເລັດແລ້ວ', 'success');
+        selectedLogoFile = null;
+        await loadSiteSettingsAdmin();
+      } catch (err) {
+        console.error(err);
+        setMsg(msg, 'ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+      } finally {
+        setLoading(saveLogoBtn, false);
+      }
+    });
+  }
+
+  const saveQrBtn = document.getElementById('saveQrBtn');
+  if (saveQrBtn) {
+    saveQrBtn.addEventListener('click', async () => {
+      const msg = document.getElementById('qrMsg');
+      if (!selectedQrFile && !currentSiteSettings.qr_url) {
+        setMsg(msg, 'ກະລຸນາເລືອກຮູບ QR ອັນທີ 1 ກ່ອນ', 'error');
+        return;
+      }
+      setLoading(saveQrBtn, true);
+      setMsg(msg, 'ກຳລັງອັບໂຫຼດ...', 'pending');
+      try {
+        const label1 = document.getElementById('settingQrLabel1').value.trim();
+        const label2 = document.getElementById('settingQrLabel2').value.trim();
+        const label3 = document.getElementById('settingQrLabel3').value.trim();
+        const label4 = document.getElementById('settingQrLabel4').value.trim();
+
+        const fields = {
+          qr_label: label1 || null,
+          qr_label_2: label2 || null,
+          qr_label_3: label3 || null,
+          qr_label_4: label4 || null
+        };
+        [1, 2, 3, 4].forEach((n) => {
+          fields['qr_sub_' + n] = document.getElementById('settingQrSub' + n).value.trim() || null;
+          fields['qr_badge_' + n] = document.getElementById('settingQrBadge' + n).value.trim() || null;
+          fields['qr_auto_' + n] = !!document.getElementById('qrAuto' + n).checked;
+        });
+        for (const n of [1, 2, 3, 4]) {
+          if (selectedQrIconFiles[n]) fields['qr_icon_' + n] = await uploadSiteAsset(selectedQrIconFiles[n], 'qr');
+        }
+        if (selectedQrFile) fields.qr_url = await uploadSiteAsset(selectedQrFile, 'qr');
+        if (selectedQrFile2) fields.qr_url_2 = await uploadSiteAsset(selectedQrFile2, 'qr');
+        if (selectedQrFile3) fields.qr_url_3 = await uploadSiteAsset(selectedQrFile3, 'qr');
+        if (selectedQrFile4) fields.qr_url_4 = await uploadSiteAsset(selectedQrFile4, 'qr');
+
+        await ensureSiteSettingsRow();
+        const { error } = await supabaseClient
+          .from(SITE_SETTINGS_TABLE)
+          .update({ ...fields, updated_at: new Date().toISOString() })
+          .eq('id', SITE_SETTINGS_ID);
+        if (error) throw error;
+        setMsg(msg, 'ບັນທຶກ QR ໂອນເງິນສຳເລັດແລ້ວ', 'success');
+        selectedQrFile = null;
+        selectedQrFile2 = null;
+        selectedQrFile3 = null;
+        selectedQrFile4 = null;
+        [1, 2, 3, 4].forEach((n) => { delete selectedQrIconFiles[n]; });
+        await loadSiteSettingsAdmin();
+      } catch (err) {
+        console.error(err);
+        setMsg(msg, 'ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+      } finally {
+        setLoading(saveQrBtn, false);
+      }
+    });
+  }
+}
+
+
+// ---------- ການເລີ່ມຕົ້ນຫ້ອງແອດມິນ (ຮັນຫຼັງຈາກກວດສິດ Discord ຜ່ານແລ້ວເທົ່ານັ້ນ) ----------
+async function initAdminPanel() {
+
+  const backBtn = document.getElementById('backBtn');
+  if (backBtn) backBtn.addEventListener('click', () => { window.location.href = 'index.html'; });
+
+  // ---- accordion (.switch หัวข้อ <-> #panelXxx กล่องเนื้อหา) ----
+  // ก่อนหน้านี้กดหัวข้อไม่มี JS คุมเลย ทำให้ .panel-content ทุกกล่องโชว์รวมกันหมด
+  // ตอนนี้คุมให้เปิดได้ทีละกล่อง กดหัวข้ออื่นจะปิดกล่องเดิมแล้วเปิดกล่องที่กด
+  //
+  // ปัญหาเดิม: #panelXxx (ເນື້ອຫາ) ຖືກວາງໄວ້ໄກຈາກ .switch (ຫົວຂໍ້) ຫຼາຍ (ຢູ່ລຸ່ມສຸດ
+  // ຂອງໜ້າ ຫຼັງ deck ທັງໝົດ) ພໍກົດເປີດແລ້ວຟອร์มไปโผล่อยู่ล่างสุดแทน ต่างจาก
+  // "ລະບົບຕົວແທນ" ທີ່ເນື້ອຫາຢູ່ໃນ .switch ດຽວກັນເລີຍບໍ່ມີບັນຫານີ້ — ແກ້ໂດຍຍ້າຍ
+  // #panelXxx ແຕ່ລະອັນເຂົ້າໄປຢູ່ໃນ .switch-body-inner ຂອງຫົວຂໍ້ຕົນເອງໂດຍກົງ
+  // (ໃນ admin.html) ໃຫ້ພຶດຕິກຳຄືກັນກັບ "ລະບົບຕົວແທນ" ທຸກອັນ ບໍ່ຕ້ອງເລື່ອນຫາອີກຕໍ່ໄປ
+  const accSwitches = document.querySelectorAll('.switch[data-target]');
+  const accPanels = document.querySelectorAll('.panel-content');
+
+  function openAccordion(targetId) {
+    accSwitches.forEach((sw) => sw.classList.toggle('open', sw.dataset.target === targetId));
+    accPanels.forEach((p) => p.classList.toggle('open', p.id === targetId));
+    // ໃຫ້ກາດ d2-fn-card ທີ່ກົງກັນ (ຢູ່ໃນ D2 dashboard) ໄດ້ອະນິເມຊັນ "ເປີດ" ນຳ
+    // (ລູກສອນໝຸນ + ຂອບຕິດສີ) ເວລາ panelAdd ຖືກເປີດຄ້າງໄວ້ຕັ້ງແຕ່ໂຫລດໜ້າ
+    document.querySelectorAll('.d2-fn-card[data-goto]').forEach((c) => {
+      c.classList.toggle('d2-open', c.dataset.goto === targetId);
+    });
+    syncAllSwitchHeights();
+  }
+
+  accSwitches.forEach((sw) => {
+    const head = sw.querySelector('.switch-head');
+    if (!head) return;
+    head.addEventListener('click', () => {
+      const targetId = sw.dataset.target;
+      const alreadyOpen = sw.classList.contains('open');
+      const nextTarget = alreadyOpen ? null : targetId;
+      openAccordion(nextTarget);
+      requestAnimationFrame(() => {
+        sw.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  });
+
+  // เปิดกล่องแรกที่ถูกตั้งเป็น .switch.open ไว้ใน HTML ตั้งแต่ต้น (panelAdd)
+  const initialOpen = document.querySelector('.switch.open[data-target]');
+  if (initialOpen) openAccordion(initialOpen.dataset.target);
+
+  initSwitchHeightObserver();
+
+  // ---- tabs (ເລື່ອນຊ້າຍ-ຂວາໄດ້, ຮອງຮັບຈຳນວນແທັບບໍ່ຈຳກັດ) ----
+  const tabs = document.querySelectorAll('.gx-tab3');
+  const tabsWrap = document.querySelector('.gx-tabs3');
+  const slider = document.getElementById('tabSlider3');
+  const panels = document.querySelectorAll('.panel');
+
+  function positionTabSlider(tab) {
+    if (!tab || !slider) return;
+    slider.style.width = tab.offsetWidth + 'px';
+    slider.style.transform = `translateX(${tab.offsetLeft - 4}px)`;
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      panels.forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(tab.dataset.panel).classList.add('active');
+      positionTabSlider(tab);
+      tab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    });
+  });
+
+  requestAnimationFrame(() => positionTabSlider(document.querySelector('.gx-tab3.active')));
+  window.addEventListener('resize', () => positionTabSlider(document.querySelector('.gx-tab3.active')));
+
+  // ---- image dropzone ----
+  const dropZone = document.getElementById('dropZone');
+  const dropZoneText = document.getElementById('dropZoneText');
+  const imageInput = document.getElementById('imageInput');
+  imageInput.addEventListener('change', () => {
+    const file = imageInput.files[0];
+    if (!file) return;
+    selectedImageFile = file;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      dropZone.classList.add('has-image');
+      dropZoneText.remove();
+      let img = dropZone.querySelector('img');
+      if (!img) {
+        img = document.createElement('img');
+        dropZone.insertBefore(img, imageInput);
+      }
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // ---- duration options builder (12ຊມ / 1ວັນ ... 30ວັນ) ----
+  const durationOptionsList = document.getElementById('durationOptionsList');
+  durationOptionsList.innerHTML = DURATION_OPTIONS.map((label, i) => `
+    <div class="duration-opt-row" data-label="${label}">
+      <label>
+        <input type="checkbox" class="dur-check" data-index="${i}">
+        ${label}
+      </label>
+      <input type="number" class="dur-price" min="0" step="0.01" placeholder="ລາຄາ (ກີບ)" style="display:none;">
+    </div>
+  `).join('');
+
+  durationOptionsList.querySelectorAll('.dur-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const priceInput = cb.closest('.duration-opt-row').querySelector('.dur-price');
+      priceInput.style.display = cb.checked ? 'block' : 'none';
+      if (cb.checked) priceInput.focus();
+    });
+  });
+
+  // ---- ໄລຍະເວລາແບບກຳນົດເອງ (ຕັ້ງຊື່ໄດ້ຕາມໃຈ) — ເພີ່ມແລ້ວເຂົ້າຮ່ວມລິດດຽວກັນກັບ preset ເລີຍ ----
+  function createCustomDurationRow() {
+    const row = document.createElement('div');
+    row.className = 'duration-opt-row custom-row';
+    row.innerHTML = `
+      <input type="text" class="cdr-label" placeholder="ຊື່ໄລຍະເວລາ ເຊັ່ນ: 15ວັນ, 2ເດືອນ">
+      <input type="number" class="cdr-price dur-price" min="0" step="0.01" placeholder="ລາຄາ (ກີບ)" style="display:block;">
+      <button type="button" class="cdr-remove" title="ລຶບ">×</button>
+    `;
+    row.querySelector('.cdr-remove').addEventListener('click', () => row.remove());
+    return row;
+  }
+
+  const addDurationRowBtn = document.createElement('button');
+  addDurationRowBtn.type = 'button';
+  addDurationRowBtn.id = 'addCustomDurationBtn';
+  addDurationRowBtn.className = 'duration-add-row';
+  addDurationRowBtn.textContent = '+ ເພີ່ມໄລຍະເວລາເອງ';
+  addDurationRowBtn.addEventListener('click', () => {
+    const row = createCustomDurationRow();
+    durationOptionsList.insertBefore(row, addDurationRowBtn);
+    row.querySelector('.cdr-label').focus();
+  });
+  durationOptionsList.appendChild(addDurationRowBtn);
+
+  // ---- ລິ້ງດາວໂຫຼດ builder (ຕອນເພີ່ມສິນຄ້າໃໝ່) — ເພີ່ມໄດ້ບໍ່ຈຳກັດ ----
+  const pLinksEnabled = document.getElementById('pLinksEnabled');
+  const linksOptionsWrap = document.getElementById('linksOptionsWrap');
+  const linkRowsList = document.getElementById('linkRowsList');
+  const addLinkRowBtn = document.getElementById('addLinkRowBtn');
+
+  function createLinkRow() {
+    const row = document.createElement('div');
+    row.className = 'link-row';
+    row.innerHTML = `
+      <input type="text" class="link-label-input" placeholder="ຊື່ລິ້ງ ເຊັ່ນ: ຄຣິບສອນເລ່ນເກມ">
+      <input type="url" class="link-url-input" placeholder="ວາງລິ້ງທີ່ນີ້ (https://...)">
+      <button type="button" class="link-row-remove" title="ລຶບ">×</button>
+    `;
+    row.querySelector('.link-row-remove').addEventListener('click', () => row.remove());
+    return row;
+  }
+
+  addLinkRowBtn.addEventListener('click', () => {
+    linkRowsList.appendChild(createLinkRow());
+  });
+
+  pLinksEnabled.addEventListener('change', () => {
+    linksOptionsWrap.style.display = pLinksEnabled.checked ? 'block' : 'none';
+    if (pLinksEnabled.checked && !linkRowsList.children.length) {
+      linkRowsList.appendChild(createLinkRow());
+    }
+  });
+
+  const pDurationEnabled = document.getElementById('pDurationEnabled');
+  const durationOptionsWrap = document.getElementById('durationOptionsWrap');
+  const basePriceField = document.getElementById('basePriceField');
+  pDurationEnabled.addEventListener('change', () => {
+    durationOptionsWrap.style.display = pDurationEnabled.checked ? 'block' : 'none';
+    basePriceField.style.display = pDurationEnabled.checked ? 'none' : 'block';
+  });
+
+  // ---- add product form ----
+  const addForm = document.getElementById('addForm');
+  addForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('addMsg');
+    const btn = document.getElementById('addSubmit');
+    const name = document.getElementById('pName').value.trim();
+    const selectedCats = [...document.querySelectorAll('#pCategoryChecks .p-cat-cb:checked')].map(i => i.value);
+    const categorySelect = joinCats(selectedCats);
+    const category = categorySelect || 'ໝວດໝູ່ສິນຄ້າ';
+    const price = parseFloat(document.getElementById('pPrice').value) || 0;
+    const description = document.getElementById('pDescription').value.trim();
+    const durationEnabled = document.getElementById('pDurationEnabled').checked;
+    const featured = document.getElementById('pFeatured').checked;
+
+    let durationRows = [];
+    if (durationEnabled) {
+      durationOptionsList.querySelectorAll('.duration-opt-row').forEach(row => {
+        if (row.classList.contains('custom-row')) {
+          const label = row.querySelector('.cdr-label').value.trim();
+          if (!label) return;
+          const durPrice = parseFloat(row.querySelector('.cdr-price').value);
+          durationRows.push({ label, price: isNaN(durPrice) ? 0 : durPrice });
+          return;
+        }
+        const cb = row.querySelector('.dur-check');
+        if (!cb || !cb.checked) return;
+        const label = row.dataset.label;
+        const durPrice = parseFloat(row.querySelector('.dur-price').value);
+        durationRows.push({ label, price: isNaN(durPrice) ? 0 : durPrice });
+      });
+    }
+
+    const linksEnabled = pLinksEnabled.checked;
+    let linkRows = [];
+    if (linksEnabled) {
+      linkRowsList.querySelectorAll('.link-row').forEach(row => {
+        const label = row.querySelector('.link-label-input').value.trim();
+        const url = row.querySelector('.link-url-input').value.trim();
+        if (label && url) linkRows.push({ label, url });
+      });
+    }
+
+    if (!name) return;
+    if (!categorySelect) {
+      setMsg(msg, 'ກະລຸນາຕິກເລືອກຢ່າງໜ້ອຍ 1 ໝວດໝູ່ກ່ອນຈຶ່ງຈະເພີ່ມສິນຄ້າໄດ້', 'error');
+      return;
+    }
+    if (durationEnabled && !durationRows.length) {
+      setMsg(msg, 'ກະລຸນາເລືອກຢ່າງໜ້ອຍ 1 ໄລຍະເວລາ ແລະ ຕັ້ງລາຄາ', 'error');
+      return;
+    }
+    if (!durationEnabled && document.getElementById('pPrice').value.trim() === '') {
+      setMsg(msg, 'ກະລຸນາໃສ່ລາຄາສິນຄ້າ', 'error');
+      return;
+    }
+    if (linksEnabled && !linkRows.length) {
+      setMsg(msg, 'ກະລຸນາໃສ່ຢ່າງໜ້ອຍ 1 ລິ້ງ (ຕ້ອງມີທັງຊື່ ແລະ URL)', 'error');
+      return;
+    }
+
+    setLoading(btn, true);
+    setMsg(msg, 'ກຳລັງເພີ່ມສິນຄ້າ...', 'pending');
+
+    let imageUrl = null;
+    try {
+      if (selectedImageFile) {
+        const imageToUpload = await compressImageIfLarge(selectedImageFile);
+        const ext = imageToUpload.name.split('.').pop();
+        const path = `products/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error: uploadError } = await supabaseClient.storage
+          .from('product-images')
+          .upload(path, imageToUpload);
+        if (uploadError) throw uploadError;
+        const { data: pub } = supabaseClient.storage.from('product-images').getPublicUrl(path);
+        imageUrl = pub.publicUrl;
+      }
+
+      const { data: newProduct, error: insertError } = await supabaseClient
+        .from('products')
+        .insert({
+          name, category,
+          price: durationEnabled ? 0 : price,
+          image_url: imageUrl,
+          duration_enabled: durationEnabled,
+          description: description || null,
+          featured
+        })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+
+      if (durationEnabled && durationRows.length) {
+        const rows = durationRows.map((d, i) => ({
+          product_id: newProduct.id,
+          label: d.label,
+          price: d.price,
+          sort_order: i
+        }));
+        const { error: durInsertError } = await supabaseClient.from('product_durations').insert(rows);
+        if (durInsertError) throw durInsertError;
+      }
+
+      if (linksEnabled && linkRows.length) {
+        const linkInsertRows = linkRows.map((l, i) => ({
+          product_id: newProduct.id,
+          label: l.label,
+          url: l.url,
+          sort_order: i
+        }));
+        const { error: linkInsertError } = await supabaseClient.from('product_links').insert(linkInsertRows);
+        if (linkInsertError) throw linkInsertError;
+      }
+
+      setMsg(msg, 'ເພີ່ມສິນຄ້າສຳເລັດແລ້ວ', 'success');
+      addForm.reset();
+      document.getElementById('pDescription').value = '';
+      pDurationEnabled.checked = false;
+      document.getElementById('pFeatured').checked = false;
+      durationOptionsWrap.style.display = 'none';
+      basePriceField.style.display = 'block';
+      durationOptionsList.querySelectorAll('.dur-price').forEach(inp => { inp.style.display = 'none'; inp.value = ''; });
+      durationOptionsList.querySelectorAll('.custom-row').forEach(row => row.remove());
+      pLinksEnabled.checked = false;
+      linksOptionsWrap.style.display = 'none';
+      linkRowsList.innerHTML = '';
+      selectedImageFile = null;
+      dropZone.classList.remove('has-image');
+      const img = dropZone.querySelector('img');
+      if (img) img.remove();
+      if (!document.getElementById('dropZoneText')) {
+        const span = document.createElement('span');
+        span.id = 'dropZoneText';
+        span.textContent = 'ແຕະເພື່ອເລືອກຮູບພາບ';
+        dropZone.insertBefore(span, imageInput);
+      }
+      loadProducts();
+    } catch (err) {
+      console.error(err);
+      setMsg(msg, 'ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'ລອງໃໝ່ອີກຄັ້ງ'), 'error');
+    } finally {
+      setLoading(btn, false);
+    }
+  });
+
+  // ---- codes ----
+  const codeProductSelect = document.getElementById('codeProductSelect');
+  codeProductSelect.addEventListener('change', renderCodeStockStrip);
+
+  const codeDurationSelect = document.getElementById('codeDurationSelect');
+  codeDurationSelect.addEventListener('change', renderCodeStockStrip);
+
+  // ແຍກ textarea ອອກເປັນລາຍການ "ລະຫັດ" ແຕ່ລະອັນ
+  // - ຖ້າແຕ່ລະແຖວເປັນລະຫັດທຳມະດາ (ເຊັ່ນ MEOW-xxxx) -> ແຍກທີລະແຖວຄືເກົ່າ
+  // - ຖ້າເປັນ JSON (ເຊັ່ນ guest_account_info ທີ່ copy ມາຫຼາຍແຖວ) -> ຈັບກຸ່ມຕາມວົງເລັບ { }
+  //   ໃຫ້ຄົງເປັນລະຫັດດຽວ ບໍ່ໃຫ້ຖືກຕັດແຍກທຸກແຖວຄືເມື່ອກ່ອນ (ນັ້ນຄືສາເຫດທີ່ລູກຄ້າໄດ້ຮັບ JSON ຂາດໆ)
+  function parseCodesInput(raw) {
+    const rawLines = raw.split('\n');
+    const results = [];
+    let buffer = '';
+    let depth = 0;
+
+    const braceDelta = (s) => {
+      let d = 0;
+      for (const ch of s) { if (ch === '{') d++; else if (ch === '}') d--; }
+      return d;
+    };
+
+    for (const line of rawLines) {
+      const trimmed = line.trim();
+      if (depth === 0) {
+        if (!trimmed) continue; // ຂ້າມແຖວຫວ່າງລະຫວ່າງລະຫັດ
+        if (trimmed.startsWith('{')) {
+          buffer = trimmed;
+          depth = braceDelta(trimmed);
+          if (depth <= 0) { results.push(buffer); buffer = ''; depth = 0; }
+        } else {
+          results.push(trimmed);
+        }
+      } else {
+        buffer += '\n' + trimmed;
+        depth += braceDelta(trimmed);
+        if (depth <= 0) { results.push(buffer); buffer = ''; depth = 0; }
+      }
+    }
+    if (buffer) results.push(buffer); // JSON ທີ່ວົງເລັບບໍ່ຄົບ ກໍ່ຍັງເພີ່ມໄວ້ (ດີກວ່າຖິ້ມຂໍ້ມູນຫາຍ)
+    return results;
+  }
+
+  const codesSubmit = document.getElementById('codesSubmit');
+  codesSubmit.addEventListener('click', async () => {
+    const msg = document.getElementById('codesMsg');
+    const textarea = document.getElementById('codesInput');
+    const productId = codeProductSelect.value;
+    const lines = parseCodesInput(textarea.value);
+    const product = currentProducts.find(p => p.id === productId);
+    const durationId = product && product.duration_enabled ? codeDurationSelect.value : null;
+
+    if (!productId) { setMsg(msg, 'ກະລຸນາເລືອກສິນຄ້າກ່ອນ', 'error'); return; }
+    if (product && product.duration_enabled && !durationId) {
+      setMsg(msg, 'ກະລຸນາເລືອກໄລຍະເວລາກ່ອນ (ຫຼືໄປສ້າງຕົວເລືອກໄລຍະເວລາທີ່ແຖບ "ເພີ່ມສິນຄ້າ" ກ່ອນ)', 'error');
+      return;
+    }
+    if (!lines.length) { setMsg(msg, 'ກະລຸນາໃສ່ລະຫັດຢ່າງໜ້ອຍ 1 ລາຍການ', 'error'); return; }
+
+    setLoading(codesSubmit, true);
+    setMsg(msg, 'ກຳລັງບັນທຶກລະຫັດ...', 'pending');
+
+    const rows = lines.map(code => ({ product_id: productId, code, duration_id: durationId || null }));
+    const { error } = await supabaseClient.from('product_codes').insert(rows);
+
+    setLoading(codesSubmit, false);
+    if (error) {
+      console.error(error);
+      setMsg(msg, 'ເກີດຂໍ້ຜິດພາດ: ' + error.message, 'error');
+      return;
+    }
+    setMsg(msg, `ເພີ່ມລະຫັດສຳເລັດ ${lines.length} ລາຍການ`, 'success');
+    textarea.value = '';
+    loadProducts();
+  });
+
+  // ---- top-up requests ----
+  const topupRefreshBtn = document.getElementById('topupRefreshBtn');
+  if (topupRefreshBtn) topupRefreshBtn.addEventListener('click', loadTopupRequests);
+
+  const slipLightbox = document.getElementById('slipLightbox');
+  const slipLightboxClose = document.getElementById('slipLightboxClose');
+  if (slipLightboxClose) slipLightboxClose.addEventListener('click', closeSlipLightbox);
+  if (slipLightbox) {
+    slipLightbox.addEventListener('click', (e) => {
+      if (e.target === slipLightbox) closeSlipLightbox();
+    });
+  }
+
+  initSiteSettingsPanel();
+  initD2Dashboard();
+
+  // ---- แผง "ໂຄ້ດສ່ວນຫຼຸດ" (coupons-admin.js) ----
+  // บัคเดิม: coupons-admin.js ประกาศ window.initCouponsPanel ไว้ แต่ไม่มีใครเรียก
+  // ทำให้ปุ่ม/ช่องกรอกในแผงนี้ไม่ได้ผูก event เลย (กดแล้วเงียบ) และรายการโค้ดค้าง "ກຳລັງໂຫຼດ..."
+  // เรียกก่อน await loadXxx ด้านล่าง เพื่อให้แผงนี้ใช้งานได้แม้ข้อมูลส่วนอื่นโหลดช้า/พัง
+  try {
+    if (typeof window.initCouponsPanel === 'function') window.initCouponsPanel();
+  } catch (err) {
+    console.error('initCouponsPanel failed:', err);
+  }
+
+  // ---- แผง "ໂປຣໂມຊັ່ນ" (promos-admin.js) ----
+  try {
+    if (typeof window.initPromosPanel === 'function') window.initPromosPanel();
+  } catch (err) {
+    console.error('initPromosPanel failed:', err);
+  }
+
+  // ---- reseller / agent ----
+  const agentCreateKeyBtn = document.getElementById('agentCreateKeyBtn');
+  if (agentCreateKeyBtn) agentCreateKeyBtn.addEventListener('click', createResellerKey);
+
+  const agentKeysRefreshBtn = document.getElementById('agentKeysRefreshBtn');
+  if (agentKeysRefreshBtn) agentKeysRefreshBtn.addEventListener('click', loadResellerKeys);
+
+  const agentAccountsRefreshBtn = document.getElementById('agentAccountsRefreshBtn');
+  if (agentAccountsRefreshBtn) agentAccountsRefreshBtn.addEventListener('click', loadAgentAccounts);
+
+  const agentAccounts2RefreshBtn = document.getElementById('agentAccounts2RefreshBtn');
+  if (agentAccounts2RefreshBtn) agentAccounts2RefreshBtn.addEventListener('click', loadAgentAccounts);
+
+  ['agentAccountsSearch', 'agentAccounts2Search'].forEach((id) => {
+    const inp = document.getElementById(id);
+    if (!inp) return;
+    inp.addEventListener('input', (e) => {
+      agentAccountsSearchTerm = e.target.value;
+      // ซิงค์คำค้นหาให้ช่องค้นหาของอีกแท็บด้วย
+      ['agentAccountsSearch', 'agentAccounts2Search'].forEach((o) => {
+        const other = document.getElementById(o);
+        if (other && other !== e.target) other.value = e.target.value;
+      });
+      renderAgentAccounts(currentAgentAccounts);
+    });
+  });
+
+  // ---- แผง "ເອົາລະຫັດອອກ" (codes-remove-admin.js): เอารหัสที่ยังไม่ขายออก/ย้ายสินค้า ----
+  try {
+    if (typeof window.initRemoveCodesPanel === 'function') window.initRemoveCodesPanel();
+  } catch (err) {
+    console.error('initRemoveCodesPanel failed:', err);
+  }
+
+  // ---- แผง "ຄັງລະຫັດ" (codes-manager.js): ดู/ซ่อน/คัดลอก/ดึงรหัสที่ยังไม่ขายคืน ----
+  try {
+    if (typeof window.initCodeVaultPanel === 'function') window.initCodeVaultPanel();
+  } catch (err) {
+    console.error('initCodeVaultPanel failed:', err);
+  }
+
+  // ---- แผง "ຈັດການລູກຄ້າ" (customers-admin.js): ดู/ปรับยอดเงิน แบน ลบบัญชี ----
+  try {
+    if (typeof window.initCustomersPanel === 'function') window.initCustomersPanel();
+  } catch (err) {
+    console.error('initCustomersPanel failed:', err);
+  }
+
+  await loadSiteSettingsAdmin();
+  await loadProducts();
+  await loadTopupRequests();
+  await loadResellerTiers();
+  await loadResellerKeys();
+  await loadD2Totals();
+  await loadD2PeriodCarousel();
+}
+
+// ============================================
+// D2 DASHBOARD — ໜ້າສະຫຼຸບຫຼັກ (KPI, ຍອດລວມ, 7 ວັນ, ແຈ້ງເຕືອນ, ນຳທາງ) — ຕໍ່ຂໍ້ມູນຈິງທັງໝົດ
+// ============================================
+let d2AllTimeTopup = null;
+let d2AllTimeOrders = null;
+let d2Periods = [];      // [...ຮອບເກົ່າ (ແຊ່ແຂງ), ຮອບປັດຈຸບັນ (ຍັງນັບຢູ່)] — ອັນສຸດທ້າຍສະເໝີເປັນ "ຮອບປັດຈຸບັນ"
+let d2ViewIndex = 0;     // index ຂອງ slide ທີ່ກຳລັງເບິ່ງຢູ່ໃນ carousel
+
+function d2FormatKip(n) {
+  return Number(n || 0).toLocaleString('de-DE');
+}
+
+// ຂໍ້ມູນ topup_requests ບາງແຖວອາດເປັນຂໍ້ມູນທົດລອງ/ພິມຜິດ (ຕົວເລກໃຫຍ່ຜິດປົກກະຕິ) — ຕັດອອກຈາກຍອດລວມ
+// ບໍ່ໃຫ້ໜ້າສະຫຼຸບໂຊວ໌ຕົວເລກເພັ້ຍນ. ຄ່າສູງສຸດທີ່ຮັບໄດ້ຕັ້ງໄວ້ 100,000,000 ກີບ/ລາຍການ (ປັບໄດ້ຖ້າຮ້ານໃຫຍ່ກວ່ານີ້)
+const D2_MAX_SANE_AMOUNT = 100000000;
+function d2SumSane(rows) {
+  let sum = 0;
+  for (const r of (rows || [])) {
+    const n = Number(r.amount);
+    if (!Number.isFinite(n) || n < 0 || n > D2_MAX_SANE_AMOUNT) {
+      console.warn('D2: ຂ້າມແຖວ topup_requests ຄ່າຜິດປົກກະຕິ (ຕິດຂອງ), amount=', r.amount);
+      continue;
+    }
+    sum += n;
+  }
+  return sum;
+}
+
+// ---- ນຳທາງ: ກົດກາດ d2-fn-card ແລ້ວເປີດ accordion ຈິງທີ່ຢູ່ລຸ່ມໜ້າ (ໃຊ້ #panelXxx ດຽວກັນ) ----
+function d2GoToPanel(targetId) {
+  const sw = document.querySelector(`.switch[data-target="${targetId}"]`);
+  const allSwitches = document.querySelectorAll('.switch[data-target]');
+  const allPanels = document.querySelectorAll('.panel-content');
+  // ກາດ d2-fn-card ທັງໝົດ (ເພີ່ມສິນຄ້າ, ຈັດການສິນຄ້າ, ເຕີມລະຫັດ, ຄຳຂໍເຕີມເງິນ, ຕົວແທນ, ຕັ້ງຄ່າ)
+  // ຕ້ອງມີອະນິເມຊັນ "ເປີດ" (ລູກສອນໝຸນ + ຂອບຕິດສີ) ຄືກັນໝົດ ບໍ່ແມ່ນສະເພາະອັນດຽວ
+  const allCards = document.querySelectorAll('.d2-fn-card[data-goto]');
+  const card = document.querySelector(`.d2-fn-card[data-goto="${targetId}"]`);
+  if (!sw) return;
+  const willOpen = !sw.classList.contains('open');
+  allSwitches.forEach((s) => s.classList.toggle('open', willOpen && s === sw));
+  allCards.forEach((c) => c.classList.toggle('d2-open', willOpen && c === card));
+  allPanels.forEach((p) => p.classList.toggle('open', willOpen && p.id === targetId));
+  syncAllSwitchHeights();
+  if (willOpen) {
+    requestAnimationFrame(() => {
+      // ຄຳນວນຄວາມສູງອີກຄັ້ງຫຼັງ layout ຈິງ (ຮູບ/ຟອນ Lao ໂຫລດແລ້ວ) ກັນຄ່າຄາດເຄື່ອນ
+      syncSwitchHeight(sw);
+      sw.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+}
+
+// ---- ຍ້າຍ .switch (ຟອມ/ເນື້ອຫາຈິງ) ຈາກ #deck ດ້ານລຸ່ມ ມາຢູ່ໃຕ້ກາດຂອງມັນເອງໃນ D2 dashboard ໂດຍກົງ ----
+// ແກ້ບັກ: ກ່ອນໜ້ານີ້ ກົດກາດແລ້ວເນື້ອຫາໄປໂຜ່ຢູ່ລຸ່ມສຸດຂອງໜ້າ (ຢູ່ໃນ #deck ເກົ່າ) ເຮັດໃຫ້ຄືກັບກະໂດດຫນີ
+// ດຽວນີ້ຍ້າຍ .switch ແຕ່ລະອັນມາຕໍ່ທ້າຍກາດຂອງມັນເລີຍ, ກົດແລ້ວເນື້ອຫາເລື່ອນລົງມາໂຜ່ຕໍ່ໜ້າກາດທັນທີ
+function d2RelocatePanels() {
+  document.querySelectorAll('.d2-fn-card[data-goto]').forEach((card) => {
+    const target = card.dataset.goto;
+    const sw = document.querySelector(`.switch[data-target="${target}"]`);
+    if (sw && card.parentElement) {
+      card.parentElement.insertBefore(sw, card.nextSibling);
+    }
+  });
+  const deck = document.getElementById('deck');
+  if (deck && !deck.querySelector('.switch')) {
+    deck.style.display = 'none';
+  }
+}
+
+function initD2Dashboard() {
+  d2RelocatePanels();
+  initSwitchHeightObserver();
+
+  document.querySelectorAll('.d2-fn-card[data-goto]').forEach((card) => {
+    if (card.dataset.bound) return;
+    card.dataset.bound = '1';
+    card.addEventListener('click', () => d2GoToPanel(card.dataset.goto));
+  });
+
+  const recheckBtn = document.getElementById('d2ChRecheckBtn');
+  const prevBtn = document.getElementById('d2ChPrevBtn');
+  const nextBtn = document.getElementById('d2ChNextBtn');
+  const track = document.getElementById('d2ChTrack');
+
+  if (prevBtn && !prevBtn.dataset.bound) {
+    prevBtn.dataset.bound = '1';
+    prevBtn.addEventListener('click', () => {
+      if (d2ViewIndex > 0) { d2ViewIndex--; renderD2ChCarousel(false); }
+    });
+  }
+  if (nextBtn && !nextBtn.dataset.bound) {
+    nextBtn.dataset.bound = '1';
+    nextBtn.addEventListener('click', () => {
+      if (d2ViewIndex < d2Periods.length - 1) { d2ViewIndex++; renderD2ChCarousel(false); }
+    });
+  }
+  if (track && !track.dataset.bound) {
+    track.dataset.bound = '1';
+    let touchStartX = null;
+    track.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; }, { passive: true });
+    track.addEventListener('touchend', (e) => {
+      if (touchStartX == null) return;
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 40) {
+        if (dx < 0 && d2ViewIndex < d2Periods.length - 1) { d2ViewIndex++; renderD2ChCarousel(false); }
+        else if (dx > 0 && d2ViewIndex > 0) { d2ViewIndex--; renderD2ChCarousel(false); }
+      }
+      touchStartX = null;
+    });
+  }
+  if (recheckBtn && !recheckBtn.dataset.bound) {
+    recheckBtn.dataset.bound = '1';
+    recheckBtn.addEventListener('click', async () => {
+      if (d2ViewIndex !== d2Periods.length - 1) return; // ຕ້ອງຢູ່ຮອບປັດຈຸບັນກ່ອນຈຶ່ງນັບໃໝ່ໄດ້
+      recheckBtn.classList.add('d2-spinning');
+      recheckBtn.disabled = true;
+      await recountD2Period();
+      recheckBtn.classList.remove('d2-spinning');
+    });
+  }
+}
+
+// ---- ຍອດລວມນັບແຕ່ເປີດຮ້ານ: ຍອດເຕີມເງິນທີ່ອະນຸມັດແລ້ວທັງໝົດ + ຈຳນວນອໍເດີສຳເລັດທັງໝົດ ----
+async function loadD2Totals() {
+  try {
+    const { data: topups, error: topupErr } = await supabaseClient
+      .from('topup_requests')
+      .select('amount')
+      .eq('status', 'approved');
+    if (topupErr) throw topupErr;
+    d2AllTimeTopup = d2SumSane(topups);
+  } catch (err) {
+    console.error('D2: ໂຫຼດຍອດເຕີມເງິນລວມບໍ່ສຳເລັດ', err);
+    d2AllTimeTopup = null;
+  }
+
+  try {
+    const { count, error: ordersErr } = await supabaseClient
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'completed');
+    if (ordersErr) throw ordersErr;
+    d2AllTimeOrders = count ?? 0;
+  } catch (err) {
+    console.error('D2: ໂຫຼດຈຳນວນອໍເດີສຳເລັດບໍ່ສຳເລັດ', err);
+    d2AllTimeOrders = null;
+  }
+
+  const topupEl = document.getElementById('d2SumTopup');
+  if (topupEl) topupEl.textContent = d2AllTimeTopup === null ? 'ຜິດພາດ' : d2FormatKip(d2AllTimeTopup);
+  const ordersEl = document.getElementById('d2SumOrders');
+  if (ordersEl) ordersEl.textContent = d2AllTimeOrders === null ? 'ຜິດພາດ' : d2FormatKip(d2AllTimeOrders);
+}
+
+// ---- ຮອບ "ຍອດເຕີມເງິນອະນຸມັດ" ແບບ carousel: ຮອບເກົ່າ (ແຊ່ແຂງໄວ້ໃນ topup_period_snapshots) + ຮອບປັດຈຸບັນ (ນັບຈາກ topup_period_start_at ຫາດຽວນີ້) ----
+const TOPUP_SNAPSHOT_TABLE = 'topup_period_snapshots';
+
+async function loadD2PeriodCarousel() {
+  const track = document.getElementById('d2ChTrack');
+  if (!track) return;
+
+  // 1) ຈຸດເລີ່ມຕົ້ນຂອງຮອບປັດຈຸບັນ — ຖ້າຍັງບໍ່ເຄີຍກົດ "ນັບຍອດໃໝ່" ເລີຍ ໃຫ້ໃຊ້ 7 ວັນຍ້ອນຫຼັງ ຄືເກົ່າ
+  let periodStart;
+  try {
+    const { data: settings, error } = await supabaseClient
+      .from(SITE_SETTINGS_TABLE)
+      .select('topup_period_start_at')
+      .eq('id', SITE_SETTINGS_ID)
+      .maybeSingle();
+    if (error) throw error;
+    periodStart = settings && settings.topup_period_start_at
+      ? new Date(settings.topup_period_start_at)
+      : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  } catch (err) {
+    console.error('D2: ໂຫຼດຈຸດເລີ່ມຕົ້ນຮອບບໍ່ສຳເລັດ', err);
+    periodStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  }
+  d2CurrentPeriodStart = periodStart;
+
+  // 2) ຮອບເກົ່າທີ່ແຊ່ແຂງໄວ້ແລ້ວ
+  let snapshots = [];
+  try {
+    const { data, error } = await supabaseClient
+      .from(TOPUP_SNAPSHOT_TABLE)
+      .select('id, label, amount, period_start, period_end')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    snapshots = data || [];
+  } catch (err) {
+    console.error('D2: ໂຫຼດຮອບເກົ່າບໍ່ສຳເລັດ (ອາດຍັງບໍ່ໄດ້ສ້າງຕາຕະລາງ topup_period_snapshots)', err);
+    snapshots = [];
+  }
+
+  // 3) ຮອບປັດຈຸບັນ — ນັບຈາກ periodStart ຫາດຽວນີ້
+  let liveAmount = 0;
+  try {
+    const { data: cur, error: curErr } = await supabaseClient
+      .from('topup_requests')
+      .select('amount')
+      .eq('status', 'approved')
+      .gte('created_at', periodStart.toISOString());
+    if (curErr) throw curErr;
+    liveAmount = d2SumSane(cur);
+  } catch (err) {
+    console.error('D2: ໂຫຼດຍອດຮອບປັດຈຸບັນບໍ່ສຳເລັດ', err);
+    liveAmount = null;
+  }
+
+  const lastSnapshotAmount = snapshots.length ? snapshots[snapshots.length - 1].amount : null;
+
+  d2Periods = [
+    ...snapshots.map((s, i) => ({
+      label: s.label,
+      value: Number(s.amount) || 0,
+      prev: i > 0 ? Number(snapshots[i - 1].amount) || 0 : null,
+      live: false,
+    })),
+    {
+      label: `${periodStart.toLocaleDateString('en-GB')} — ${new Date().toLocaleDateString('en-GB')}`,
+      value: liveAmount,
+      prev: lastSnapshotAmount,
+      live: true,
+    },
+  ];
+  d2ViewIndex = d2Periods.length - 1;
+  renderD2ChCarousel(true);
+}
+
+function d2ChSlideHtml(p) {
+  let badgeHtml = '<span class="d2-ch-badge d2-flat">—</span>';
+  if (p.value === null) {
+    badgeHtml = '<span class="d2-ch-badge d2-down">ຜິດພາດ</span>';
+  } else if (!p.live) {
+    badgeHtml = '<span class="d2-ch-badge d2-reset">ຮອບເກົ່າ</span>';
+  } else if (p.prev != null) {
+    if (p.prev === 0 && p.value === 0) {
+      badgeHtml = '<span class="d2-ch-badge d2-flat">ບໍ່ມີການເຕີມເງິນ</span>';
+    } else if (p.prev === 0) {
+      badgeHtml = '<span class="d2-ch-badge d2-up">ຂຶ້ນໃໝ່</span>';
+    } else {
+      const pct = Math.round(((p.value - p.prev) / p.prev) * 100);
+      if (pct > 0) badgeHtml = `<span class="d2-ch-badge d2-up">▲ ${pct}%</span>`;
+      else if (pct < 0) badgeHtml = `<span class="d2-ch-badge d2-down">▼ ${Math.abs(pct)}%</span>`;
+      else badgeHtml = '<span class="d2-ch-badge d2-flat">ເທົ່າເກົ່າ</span>';
+    }
+  }
+  return `
+    <div class="d2-ch-slide">
+      <div class="d2-ch-head">
+        <div>
+          <div class="d2-ch-title">ຍອດເຕີມເງິນອະນຸມັດ ${p.live ? '(ຮອບປັດຈຸບັນ)' : '(ຍ້ອນຫຼັງ)'}</div>
+          <div class="d2-ch-sub">${p.label}</div>
+        </div>
+        ${badgeHtml}
+      </div>
+      <div class="d2-ch-value">${p.value === null ? 'ຜິດພາດ' : d2FormatKip(p.value)}<span>ກີບ</span></div>
+      <div class="d2-ch-prev">${p.prev != null ? `ທຽບກັບຮອບກ່ອນໜ້າ: ${d2FormatKip(p.prev)} ກີບ` : 'ຮອບທຳອິດ — ບໍ່ມີຂໍ້ມູນປຽບທຽບ'}</div>
+    </div>`;
+}
+
+function renderD2ChCarousel(instant) {
+  const track = document.getElementById('d2ChTrack');
+  const dotsEl = document.getElementById('d2ChDots');
+  const prevBtn = document.getElementById('d2ChPrevBtn');
+  const nextBtn = document.getElementById('d2ChNextBtn');
+  const recheckBtn = document.getElementById('d2ChRecheckBtn');
+  const recheckLabel = document.getElementById('d2ChRecheckLabel');
+  if (!track || !d2Periods.length) return;
+
+  track.innerHTML = d2Periods.map(d2ChSlideHtml).join('');
+  if (instant) track.style.transition = 'none';
+  track.style.transform = `translateX(-${d2ViewIndex * 100}%)`;
+  if (instant) requestAnimationFrame(() => { track.style.transition = ''; });
+
+  if (dotsEl) {
+    dotsEl.innerHTML = d2Periods.map((_, i) =>
+      `<span class="d2-ch-dot${i === d2ViewIndex ? ' active' : ''}"></span>`).join('');
+  }
+  if (prevBtn) prevBtn.disabled = d2ViewIndex === 0;
+  if (nextBtn) nextBtn.disabled = d2ViewIndex === d2Periods.length - 1;
+  const onLive = d2ViewIndex === d2Periods.length - 1;
+  if (recheckBtn) recheckBtn.disabled = !onLive;
+  if (recheckLabel) recheckLabel.textContent = onLive ? 'ນັບຍອດໃໝ່' : 'ກັບໄປຮອບປັດຈຸບັນເພື່ອນັບໃໝ່';
+}
+
+// ---- ກົດ "ນັບຍອດໃໝ່": ແຊ່ແຂງຍອດຮອບປັດຈຸບັນເປັນປະຫວັດ ແລ້ວເລີ່ມນັບຮອບໃໝ່ຈາກ 0 (ບໍ່ແຕະຂໍ້ມູນ topup_requests ຈິງ) ----
+let d2CurrentPeriodStart = null;
+
+async function recountD2Period() {
+  const live = d2Periods[d2Periods.length - 1];
+  if (!live || live.value === null) {
+    showToast('ໂຫຼດຍອດປັດຈຸບັນບໍ່ສຳເລັດ ລອງໃໝ່ພາຍຫຼັງ');
+    return;
+  }
+  const now = new Date();
+  try {
+    const { error: insertErr } = await supabaseClient
+      .from(TOPUP_SNAPSHOT_TABLE)
+      .insert({
+        label: live.label,
+        amount: live.value,
+        period_start: (d2CurrentPeriodStart || now).toISOString(),
+        period_end: now.toISOString(),
+      });
+    if (insertErr) throw insertErr;
+
+    await ensureSiteSettingsRow();
+    const { error: updateErr } = await supabaseClient
+      .from(SITE_SETTINGS_TABLE)
+      .update({ topup_period_start_at: now.toISOString(), updated_at: now.toISOString() })
+      .eq('id', SITE_SETTINGS_ID);
+    if (updateErr) throw updateErr;
+
+    await loadD2PeriodCarousel();
+    const lastCheckEl = document.getElementById('d2ChLastCheck');
+    if (lastCheckEl) {
+      lastCheckEl.textContent = 'ນັບຍອດໃໝ່ລ່າສຸດ: ' + now.toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit' });
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('ນັບຍອດໃໝ່ບໍ່ສຳເລັດ — ກວດວ່າໄດ້ແລ່ນ topup_period_recount_setup.sql ໃນ Supabase ແລ້ວ');
+  }
+}
+
+// ---- KPI + badge + ແຈ້ງເຕືອນ: ຄິດຈາກ currentProducts / currentTopupRequests / currentAgentAccounts ທີ່ໂຫຼດໄວ້ແລ້ວ ----
+function renderD2Dashboard() {
+  if (!document.getElementById('d2KpiProducts')) return;
+
+  const products = currentProducts || [];
+  const topups = currentTopupRequests || [];
+  const agents = currentAgentAccounts || [];
+
+  const totalStock = products.reduce((sum, p) => sum + (Number(p.stock) || 0), 0);
+  const activeProducts = products.filter(p => !p.archived);
+  const outOfStock = activeProducts.filter(p => !p.paused && (Number(p.stock) || 0) <= 0);
+  const activeAgents = agents.filter(a => a.is_reseller).length;
+
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+  setText('d2KpiProducts', products.length);
+  setText('d2KpiStock', totalStock);
+  setText('d2KpiTopup', topups.length);
+  setText('d2KpiAgents', activeAgents);
+
+  setText('d2BadgeManage', `${products.length} ລາຍການ`);
+  setText('d2BadgeAgent', `${activeAgents} ທຳງານຢູ່`);
+
+  const codesBadge = document.getElementById('d2BadgeCodes');
+  if (codesBadge) {
+    codesBadge.textContent = outOfStock.length ? `${outOfStock.length} ໝົດສະຕັອກ` : 'ພຽງພໍ';
+    codesBadge.className = 'd2-fn-badge ' + (outOfStock.length ? 'd2-urgent' : 'd2-ok');
+  }
+  const topupBadgeEl = document.getElementById('d2BadgeTopup');
+  if (topupBadgeEl) {
+    topupBadgeEl.textContent = topups.length ? `${topups.length} ລໍຖ້າ` : 'ບໍ່ມີລໍຖ້າ';
+    topupBadgeEl.className = 'd2-fn-badge ' + (topups.length ? 'd2-warn' : 'd2-ok');
+  }
+
+  // ---- ແຈ້ງເຕືອນ ----
+  const alerts = [];
+  if (outOfStock.length) {
+    alerts.push({
+      sev: 'high',
+      text: `${outOfStock.length} ສິນຄ້າໝົດສະຕັອກແລ້ວ`,
+      sub: 'ລູກຄ້າກົດຊື້ບໍ່ໄດ້ຕອນນີ້',
+      goto: 'panelCodes',
+    });
+  }
+  if (topups.length) {
+    const oldest = topups.reduce((o, r) => (!o || new Date(r.created_at) < new Date(o.created_at)) ? r : o, null);
+    const waitMin = oldest ? Math.max(0, Math.round((Date.now() - new Date(oldest.created_at).getTime()) / 60000)) : 0;
+    alerts.push({
+      sev: 'mid',
+      text: `${topups.length} ຄຳຂໍເຕີມເງິນລໍຖ້າກວດສອບ`,
+      sub: oldest ? `ລໍຖ້າດົນສຸດ ${waitMin} ນາທີ` : '',
+      goto: 'panelTopup',
+    });
+  }
+
+  const attnCountEl = document.getElementById('d2AttnCount');
+  const attnListEl = document.getElementById('d2AttnList');
+  if (attnCountEl) attnCountEl.textContent = alerts.length;
+  if (attnListEl) {
+    if (!alerts.length) {
+      attnListEl.innerHTML = `<div class="d2-attn-empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> ທຸກຢ່າງຮຽບຮ້ອຍດີ — ບໍ່ມີສິ່ງທີ່ຕ້ອງດຳເນີນການດ່ວນ</div>`;
+    } else {
+      attnListEl.innerHTML = alerts.map((a) => `
+        <div class="d2-attn-row" data-goto="${a.goto}">
+          <span class="d2-attn-dot d2-sev-${a.sev}"></span>
+          <div class="d2-attn-body">
+            <div class="d2-attn-text">${a.text}</div>
+            <div class="d2-attn-sub">${a.sub}</div>
+          </div>
+          <span class="d2-attn-arrow"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+        </div>
+      `).join('');
+      attnListEl.querySelectorAll('.d2-attn-row[data-goto]').forEach((row) => {
+        row.addEventListener('click', () => d2GoToPanel(row.dataset.goto));
+      });
+    }
+  }
+}
+
+// ============================================
+// ພາກ 3: ເລີ່ມຕົ້ນເມື່ອໂຫຼດໜ້າ
+// ============================================
+document.addEventListener('DOMContentLoaded', () => {
+
+  const deniedLogoutBtn = document.getElementById('deniedLogoutBtn');
+  if (deniedLogoutBtn) deniedLogoutBtn.addEventListener('click', logout);
+
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) logoutBtn.addEventListener('click', () => { window.location.href = 'index.html'; });
+
+  checkAuthAndInit();
+});
+
+// รูปสินค้าในรายการแอดมินที่โหลดไม่ขึ้นให้จางหาย (เดิมใช้ onerror ในแท็ก ซึ่ง CSP บล็อก)
+document.addEventListener('error', function (e) {
+  var t = e.target;
+  if (t && t.tagName === 'IMG' && t.classList && t.classList.contains('prod-thumb')) t.style.opacity = 0;
+}, true);
