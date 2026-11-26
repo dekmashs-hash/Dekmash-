@@ -8,19 +8,20 @@
 <title>ຈັດການແຜງຮ້ານ</title>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link href="https://fonts.gstatic.com" rel="preconnect" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700;800&amp;family=Noto+Sans+Thai+Looped:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
 <link href="shop-panel.css" rel="stylesheet"/>
 </head>
 <body>
+<div class="sp-top" id="spTop">
 <header class="sp-head">
   <button class="sp-btn sp-burger" id="spBurger" type="button" aria-label="ເມນູ" aria-expanded="false" aria-controls="spSheet">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path class="bl t" d="M4 7h16"/><path class="bl m" d="M4 12h16"/><path class="bl b" d="M4 17h16"/></svg>
   </button>
   <div class="sp-brand">
     <span class="sp-logo" id="spLogo"><span id="spLogoTxt">D</span></span>
     <span class="sp-brand-txt">
       <span class="sp-brand-name" id="spName">DEK MASH</span>
-      <span class="sp-brand-sub">ແຜງຈັດການ</span>
+      <span class="sp-brand-sub">แผงจัดการ V2</span>
     </span>
   </div>
   <div class="sp-head-right">
@@ -37,10 +38,31 @@
   </div>
 </header>
 
-<div class="sp-sheet" id="spSheet" hidden>
-  <a href="index.html">ໜ້າຫຼັກຮ້ານ</a>
-  <a href="admin.html">ຫ້ອງແອດມິນ (V1)</a>
-  <a href="/auth/logout" class="out">ອອກຈາກລະບົບ</a>
+<nav class="sp-menu" id="spSheet" aria-label="เมนูแผงจัดการ" aria-hidden="true" inert>
+  <div class="sp-menu-clip"><div class="sp-menu-in">
+    <a class="mrow pill outline" href="index.html" style="--i:0">
+      <svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg><span>หน้าเว็บ</span>
+    </a>
+    <a class="mrow pill active" href="#" id="spMenuDash" style="--i:1" aria-current="page">
+      <svg class="mi" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.500a9.500 9.500 0 1 0 0 19c1.400 0 2.200-.9 2.200-2 0-.6-.3-1.100-.6-1.500-.4-.4-.6-.8-.6-1.300 0-1 .8-1.700 1.800-1.700H17a4.500 4.500 0 0 0 4.500-4.500C21.500 6 17.300 2.500 12 2.500zM7.200 11a1.300 1.300 0 1 1 0-2.600 1.300 1.300 0 0 1 0 2.600zm3.300-3.800a1.300 1.300 0 1 1 0-2.600 1.300 1.300 0 0 1 0 2.600zm5 0a1.300 1.300 0 1 1 0-2.600 1.300 1.300 0 0 1 0 2.600zM18.600 11a1.300 1.300 0 1 1 0-2.600 1.300 1.300 0 0 1 0 2.600z"/></svg><span>Dashboard</span>
+    </a>
+    <button class="mrow grp" type="button" style="--i:2">
+      <svg class="mi" viewBox="0 0 24 24" fill="currentColor"><path d="M7.500 2.500h4v6h-4zM3 11h5.500v7H3zM15.500 11H21v7h-5.500zM9.500 11h4.500v7H9.500z" opacity="0"/><rect x="7.500" y="2.500" width="5" height="5.500" rx="1"/><rect x="2.500" y="10" width="5.500" height="5.500" rx="1"/><rect x="9.500" y="10" width="5.500" height="5.500" rx="1"/><rect x="16.500" y="10" width="5" height="5.500" rx="1"/><rect x="2.500" y="16.500" width="19" height="3.500" rx="1"/></svg><span>สินค้า &amp; หมวดหมู่</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <button class="mrow grp" type="button" style="--i:3">
+      <svg class="mi" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="8" r="3.200"/><circle cx="17" cy="9" r="2.600"/><path d="M1.800 19c0-3.400 2.600-5.600 6.200-5.600s6.200 2.200 6.200 5.600z"/><path d="M16 13.600c3.400 0 5.900 1.800 5.900 5.400h-5.200c0-2-.4-3.900-.9-5.400z"/></svg><span>สมาชิก &amp; รายการ</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <button class="mrow grp" type="button" style="--i:4">
+      <svg class="mi" viewBox="0 0 24 24" fill="currentColor"><path d="M4 5.500A2.500 2.500 0 0 1 6.500 3H17v3H6.500z" opacity=".5"/><rect x="2.500" y="5.500" width="19" height="15" rx="3"/><circle cx="17" cy="13" r="1.400" fill="#0a0a0a"/></svg><span>ระบบชำระเงิน</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <button class="mrow grp" type="button" style="--i:5">
+      <svg class="mi" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.500 2.500v5M15.500 2.500v5M6 7.500h12v3.500a6 6 0 0 1-12 0z"/><path d="M12 17v4.500"/></svg><span>เชื่อมต่อ API</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <button class="mrow grp" type="button" style="--i:6">
+      <svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h9M17 6h4M3 12h3M11 12h10M3 18h11M19 18h2"/><circle cx="14.500" cy="6" r="2.300"/><circle cx="8.500" cy="12" r="2.300"/><circle cx="16.500" cy="18" r="2.300"/></svg><span>ตั้งค่าทั่วไป</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </div></div>
+</nav>
 </div>
 
 <main class="sp-main">

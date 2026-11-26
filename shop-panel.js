@@ -120,15 +120,23 @@
   }
 
   function init() {
-    $('spBurger').addEventListener('click', function (e) {
+    var burger = $('spBurger'), menu = $('spSheet');
+    function setMenu(open) {
+      menu.classList.toggle('open', open);
+      menu.setAttribute('aria-hidden', String(!open));
+      if (open) menu.removeAttribute('inert'); else menu.setAttribute('inert', '');
+      burger.setAttribute('aria-expanded', String(open));
+      burger.setAttribute('aria-label', open ? 'ປິດເມນູ' : 'ເມນູ');
+    }
+    burger.addEventListener('click', function (e) {
       e.stopPropagation();
-      var sh = $('spSheet'); sh.hidden = !sh.hidden;
-      this.setAttribute('aria-expanded', String(!sh.hidden));
+      setMenu(!menu.classList.contains('open'));
     });
     document.addEventListener('click', function (e) {
-      var sh = $('spSheet');
-      if (!sh.hidden && !sh.contains(e.target)) { sh.hidden = true; $('spBurger').setAttribute('aria-expanded', 'false'); }
+      if (menu.classList.contains('open') && !menu.contains(e.target)) setMenu(false);
     });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setMenu(false); });
+    $('spMenuDash').addEventListener('click', function (e) { e.preventDefault(); setMenu(false); window.scrollTo({ top: 0, behavior: 'smooth' }); });
     $('spRefresh').addEventListener('click', load);
     $('spRenew').addEventListener('click', function () {
       if (rental.renew_url) { window.open(rental.renew_url, '_blank', 'noopener'); return; }
