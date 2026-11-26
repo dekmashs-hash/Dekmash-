@@ -1802,6 +1802,19 @@ async function handleSupabaseProxy(request, env, url) {
   const targetUrl = env.SUPABASE_URL.replace(/\/$/, '') + targetPath + url.search;
   const hasBody = !['GET', 'HEAD'].includes(request.method);
 
+  // ---- แคชรูป public (สินค้า/แบนเนอร์/QR) ที่ขอบ Cloudflare: ลด egress ของ Supabase ----
+  // ชื่อไฟล์มี timestamp+random เสมอ (อัปโหลดใหม่ = URL ใหม่) จึงแคชนานได้อย่างปลอดภัย
+  // ไม่แคชสลิป (topup-slips) เพราะถูกลบทิ้งหลังใช้งาน
+  const cacheable = isPublicStorageRead && !targetPath.startsWith('/storage/v1/object/public/topup-slips/');
+  const edgeCache = cacheable && typeof caches !== 'undefined' ? caches.default : null;
+  const cacheKey = new Request(url.origin + url.pathname + url.search, { method: 'GET' });
+  if (edgeCache) {
+    try {
+      const hit = await edgeCache.match(cacheKey);
+      if (hit) return hit;
+    } catch { /* ข้าม แล้วไปดึงจริง */ }
+  }
+
   const upstream = await fetch(targetUrl, {
     method: request.method,
     headers,
@@ -1811,6 +1824,13 @@ async function handleSupabaseProxy(request, env, url) {
 
   const respHeaders = new Headers(upstream.headers);
   respHeaders.delete('set-cookie'); // กันไม่ให้ response จาก Supabase ไปยุ่งกับ cookie ของเว็บเรา
+
+  if (edgeCache && upstream.status === 200) {
+    respHeaders.set('Cache-Control', 'public, max-age=31536000, immutable');
+    const out = new Response(upstream.body, { status: 200, headers: respHeaders });
+    try { await edgeCache.put(cacheKey, out.clone()); } catch { /* ข้าม */ }
+    return out;
+  }
 
   return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
 }
@@ -2922,6 +2942,7 @@ async function handleTopupConfirm(request, env) {
     return json({ error: 'ໄຟລ໌ຮູບໃຫຍ່ເກີນໄປ (ຈຳກັດ 8MB)' }, 400);
   }
 
+  let slipUrl = null;
   try {
     const SAFE_EXT_BY_TYPE = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
     const extMatch = /\.([a-zA-Z0-9]{1,8})$/.exec(slip.name || '');
@@ -2930,7 +2951,7 @@ async function handleTopupConfirm(request, env) {
       || (rawExt && /^(jpg|jpeg|png|webp|gif)$/.test(rawExt) ? rawExt : 'jpg');
     const objectPath = `${user.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
 
-    const slipUrl = await uploadToSupabaseStorage(env, 'topup-slips', objectPath, slip);
+    slipUrl = await uploadToSupabaseStorage(env, 'topup-slips', objectPath, slip);
 
     // ໝາຍເຫດ: ບໍ່ໃສ່ຄໍລໍາ "bank" ໃນນີ້ ເພາະຕາຕະລາງ topup_requests ທີ່ໃຊ້ຢູ່ (ອ້າງອີງ
     // ຈາກ admin.js) ບໍ່ໄດ້ອ່ານ/ໂຊວ໌ຄ່ານີ້ຢູ່ແລ້ວ — ຖ້າ column ບໍ່ມີໃນ Supabase ຈິງ ການ
@@ -2940,7 +2961,7 @@ async function handleTopupConfirm(request, env) {
     let fallbackReason = null, fallbackDebug = '';
     if (wantAuto) {
       const auto = await handleAutoSlipTopup(env, { user, amount, slip, slipUrl, qr: qrText, ref: refText });
-      if (auto.response) return auto.response;
+      if (auto.response) { await deleteTopupSlip(env, slipUrl); return auto.response; } // สลิปไม่ผ่าน/ซ้ำ -> ไม่มีแถวให้เก็บ ลบไฟล์ทิ้ง
       if (auto.rows) {
         // ອັດຕະໂນມັດເຕີມສຳເລັດແລ້ວ (approved) -> ບໍ່ຕ້ອງສົ່ງການແຈ້ງເຕືອນ "ໃຫ້ແອດມິນກົດຢືນຢັນ" ອີກ (ມີ embed ແຈ້ງຜົນອັດຕະໂນມັດສົ່ງແລ້ວ)
         // ຖ້າຍັງ pending (ຍອດບໍ່ຕົງ/ສະລິບເກົ່າ/ເຕີມບໍ່ສຳເລັດ) ຍັງຕ້ອງສົ່ງໃຫ້ແອດມິນກົດຢືນຢັນຄືເດີມ
@@ -2980,6 +3001,7 @@ async function handleTopupConfirm(request, env) {
     return json({ ok: true, id: (rows && rows[0] && rows[0].id) || null, note: fallbackReason ? 'ກວດອັດຕະໂນມັດບໍ່ໄດ້ — ສົ່ງໃຫ້ແອດມິນກວດ [' + fallbackReason.slice(0, 60) + ']' : null });
   } catch (err) {
     console.error('handleTopupConfirm failed:', err);
+    await deleteTopupSlip(env, slipUrl); // บันทึกไม่สำเร็จ -> ไม่ทิ้งไฟล์ค้างใน Storage
     return json({ error: 'ບັນທຶກລາຍການເຕີມເງິນບໍ່ສຳເລັດ, ລອງໃໝ່ພາຍຫຼັງ' }, 502);
   }
 }
@@ -3820,6 +3842,29 @@ async function uploadToSupabaseStorage(env, bucket, path, file) {
   return `${env.SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${path}`;
 }
 
+/* ลบสลิปออกจาก Storage ทันทีเมื่อใช้งานเสร็จ (ไม่เก็บไว้ — กันโควตา Storage เต็ม)
+   รับ public URL ของสลิป -> ลบไฟล์ใน bucket topup-slips แล้วเคลียร์ slip_url ในแถว (ถ้าส่ง topupId มา)
+   best-effort: ล้มเหลวไม่กระทบการเติมเงิน แค่ log ไว้ */
+async function deleteTopupSlip(env, slipUrl, topupId) {
+  try {
+    if (!slipUrl) return;
+    const marker = '/storage/v1/object/public/topup-slips/';
+    const i = String(slipUrl).indexOf(marker);
+    if (i < 0) return;
+    const objectPath = decodeURIComponent(String(slipUrl).slice(i + marker.length).split('?')[0]);
+    if (!objectPath || objectPath.includes('..')) return;
+    const res = await fetch(`${env.SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/topup-slips/${objectPath.split('/').map(encodeURIComponent).join('/')}`, {
+      method: 'DELETE',
+      headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok && res.status !== 404) { console.error('deleteTopupSlip failed', res.status, await res.text()); return; }
+    if (topupId) {
+      try { await sbRaw(env, 'PATCH', `topup_requests?id=eq.${encodeURIComponent(String(topupId))}`, { slip_url: null }); } catch { /* ข้าม */ }
+    }
+  } catch (e) { console.error('deleteTopupSlip error', e); }
+}
+
 
 /* เทียบ secret แบบกัน timing attack */
 function safeEqual(a, b) {
@@ -3972,6 +4017,9 @@ async function applyTopupDecision(env, rawTopupId, decision) {
         return json({ error: 'เติมเงินเข้ากระเป๋าไม่สำเร็จ: ' + err.message }, 502);
       }
     }
+
+    // 3) ตัดสินแล้ว (อนุมัติ/ปฏิเสธ — ทั้งปุ่มหน้าเว็บ, ปุ่ม Discord, และเติมออโต้ API) -> ลบสลิปทิ้งทันที
+    await deleteTopupSlip(env, row.slip_url, row.id || topupId);
 
     return json({
       ok: true,
