@@ -1796,10 +1796,13 @@ async function handleSupabaseProxy(request, env, url) {
 
   // header ที่ไม่ควร forward ไปตรงๆ: host เดิม, cookie ของเว็บเรา (ไม่เกี่ยวกับ Supabase),
   // และ apikey/authorization ที่เบราว์เซอร์ส่งมา (จะถูกใส่ค่าจริงทับด้านล่างเสมอ)
-  const skipHeaders = new Set(['host', 'cookie', 'apikey', 'authorization', 'content-length']);
+  // + header ที่บอกว่าเป็น "เบราว์เซอร์" (origin/referer/user-agent/sec-*): Supabase จะปฏิเสธ secret key
+  //   ด้วย error "Forbidden use of secret API key in browser" ถ้าเห็น header พวกนี้ — Worker เป็นฝั่งเซิร์ฟเวอร์ ต้องไม่ส่งต่อ
+  const skipHeaders = new Set(['host', 'cookie', 'apikey', 'authorization', 'content-length', 'origin', 'referer', 'user-agent']);
   const headers = new Headers();
   for (const [key, value] of request.headers) {
-    if (!skipHeaders.has(key.toLowerCase())) headers.set(key, value);
+    const k = key.toLowerCase();
+    if (!skipHeaders.has(k) && !k.startsWith('sec-') && !k.startsWith('cf-') && !k.startsWith('x-forwarded-')) headers.set(key, value);
   }
   headers.set('apikey', env.SUPABASE_SERVICE_ROLE_KEY);
   headers.set('authorization', `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`);
