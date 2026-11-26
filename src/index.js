@@ -115,6 +115,11 @@ async function route(request, env, ctx) {
       return handleBotTopupDecision(request, env);
     }
 
+    // webhook จาก topup.com.la (ผลออเดอร์) — ตอนนี้แค่รับ + log ไม่แตะเงิน/ออเดอร์ใดๆ
+    if (url.pathname === '/webhook/topup') {
+      return handleTopupWebhook(request);
+    }
+
     // เช็คสถานะปิด/เปิดเว็บ (public) — ต้องอยู่ก่อน maintenanceGate เพื่อให้หน้าปิดปรับปรุงเช็คได้ว่าเว็บเปิดกลับมาหรือยัง
     if (url.pathname === '/api/maintenance-status') {
       return handleMaintenanceStatus(request, env);
@@ -4031,4 +4036,20 @@ async function applyTopupDecision(env, rawTopupId, decision) {
     console.error('applyTopupDecision failed:', err);
     return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
   }
+}
+
+
+/* ---------- POST /webhook/topup ----------
+   topup.com.la ยิงผลออเดอร์มาที่นี่ (ตั้งในหน้า API > Webhook URL)
+   เวอร์ชันนี้: รับแล้วตอบ 200 + บันทึก log (ดูได้ใน Cloudflare > Workers > Logs) เท่านั้น
+   ยังไม่เติมเงิน/แก้ออเดอร์ เพราะยังไม่ได้ตรวจลายเซ็น (signature) — ห้ามเชื่อข้อมูลจากที่นี่จนกว่าจะเพิ่มการตรวจ */
+async function handleTopupWebhook(request) {
+  if (request.method !== 'POST') return json({ ok: true }, 200);
+  try {
+    const text = (await request.text()).slice(0, 2000);
+    const hdr = {};
+    for (const [k, v] of request.headers) if (/sign|event|id|type|content-type/i.test(k)) hdr[k] = v.slice(0, 120);
+    console.log('topup webhook', JSON.stringify(hdr), text);
+  } catch (e) { console.error('topup webhook read failed', e); }
+  return json({ ok: true }, 200);
 }
