@@ -62,7 +62,7 @@
     { key: 'profile',  label: 'ໂປຣໄຟລ໌',        href: 'profile.html',       icon: I.user, chev: true },
     { key: 'reseller', label: 'ຕົວແທນ',          href: 'reseller.html',      icon: I.tag,  chev: true },
     { key: 'admin',    label: 'ແອດມິນ',          href: 'admin.html',         icon: I.shield, chev: true, adminOnly: true },
-    { key: 'shopmanage', label: 'ຈັດການແຜງຮ້ານ',  href: 'admin.html#panelShopManage', icon: I.shop3d, ico3d: true, chev: true, adminOnly: true }
+    { key: 'shopmanage', label: 'ຈັດການແຜງຮ້ານ',  href: 'shop-panel.html', icon: I.shop3d, ico3d: true, chev: true, adminOnly: true }
   ];
   var T = {
     title: 'ເມນູຮ້ານຄ້າ', member: 'ສະມາຊິກ', reseller: 'ຕົວແທນ', admin: 'ແອດມິນ',
@@ -90,6 +90,7 @@
       case 'profile': return 'profile';
       case 'reseller': return 'reseller';
       case 'admin': return 'admin';
+      case 'shop-panel': return 'shopmanage';
       default: return null;
     }
   }

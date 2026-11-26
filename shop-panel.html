@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#000000"/>
+<meta name="robots" content="noindex, nofollow"/>
+<title>ຈັດການແຜງຮ້ານ</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link href="https://fonts.gstatic.com" rel="preconnect" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="shop-panel.css" rel="stylesheet"/>
+</head>
+<body>
+<header class="sp-head">
+  <button class="sp-btn sp-burger" id="spBurger" type="button" aria-label="ເມນູ" aria-expanded="false" aria-controls="spSheet">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div class="sp-brand">
+    <span class="sp-logo" id="spLogo"><span id="spLogoTxt">D</span></span>
+    <span class="sp-brand-txt">
+      <span class="sp-brand-name" id="spName">DEK MASH</span>
+      <span class="sp-brand-sub">ແຜງຈັດການ</span>
+    </span>
+  </div>
+  <div class="sp-head-right">
+    <a class="sp-btn sp-v1" href="admin.html" aria-label="ກັບໄປແອດມິນ V1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.500"/><path d="M12 4v16"/></svg>
+      <span>V1</span>
+    </a>
+    <div class="sp-user">
+      <span class="sp-avatar" id="spAvatar">A</span>
+      <a class="sp-logout" href="/auth/logout" aria-label="ອອກຈາກລະບົບ">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+      </a>
+    </div>
+  </div>
+</header>
+
+<div class="sp-sheet" id="spSheet" hidden>
+  <a href="index.html">ໜ້າຫຼັກຮ້ານ</a>
+  <a href="admin.html">ຫ້ອງແອດມິນ (V1)</a>
+  <a href="/auth/logout" class="out">ອອກຈາກລະບົບ</a>
+</div>
+
+<main class="sp-main">
+  <!-- ກາດສະຖານະອາຍຸແພັກເກັດເວັບ -->
+  <section class="sp-card sp-status" id="spStatus">
+    <div class="sp-status-ico">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.500"/><path d="M12 7v5.200l3.200 2"/></svg>
+    </div>
+    <div class="sp-status-body">
+      <span class="sp-pill" id="spPill"><i class="sp-dot"></i><span id="spPillTxt">ກຳລັງໂຫຼດ...</span></span>
+      <h1 class="sp-status-title" id="spLeft">—</h1>
+      <p class="sp-status-sub" id="spLeftSub">&nbsp;</p>
+    </div>
+    <button class="sp-cta" id="spRenew" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.400" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.750 9.750 0 0 1 6.740 2.740L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.750 9.750 0 0 1-6.740-2.740L3 16"/><path d="M8 16H3v5"/></svg>
+      ຕໍ່ອາຍຸເວັບໄຊ
+    </button>
+  </section>
+
+  <nav class="sp-crumb" aria-label="ເສັ້ນທາງ">ແຜງຄວບຄຸມລະບົບ / ພາບລວມລະບົບ / ລາຍໄດ້ສະສົມ</nav>
+
+  <!-- ກາດຫົວຂໍ້ພາບລວມ -->
+  <section class="sp-card sp-dash">
+    <div class="sp-dash-ico">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.500 3.200A9 9 0 1 0 20.800 13.500H10.500z"/><path d="M13.500 2.200A9 9 0 0 1 21.800 10.500H13.500z"/></svg>
+    </div>
+    <div class="sp-dash-txt">
+      <span class="sp-eyebrow"><i class="sp-dot"></i>ແຜງຄວບຄຸມແອດມິນ</span>
+      <h2>ພາບລວມສະຖິຕິລາຍໄດ້</h2>
+    </div>
+    <button class="sp-pill sp-pill-btn" id="spRefresh" type="button" aria-label="ໂຫຼດຂໍ້ມູນໃໝ່">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.400" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.750 9.750 0 0 1 6.740 2.740L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.750 9.750 0 0 1-6.740-2.740L3 16"/><path d="M8 16H3v5"/></svg>
+      <span>ຍອດມື້ນີ້: <b id="spToday">₭0</b></span>
+    </button>
+  </section>
+
+  <div class="sp-err" id="spErr" hidden></div>
+
+  <!-- ກາດສະຖິຕິ -->
+  <section class="sp-grid" id="spGrid">
+    <article class="sp-card sp-stat c-white">
+      <div class="sp-stat-top"><span class="sp-stat-label">ສະມາຊິກທັງໝົດ</span>
+        <span class="sp-tile t-red"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="8" r="3.300"/><path d="M2.800 19.500c0-3.400 2.800-5.600 6.200-5.600s6.200 2.200 6.200 5.600z"/><circle cx="17.200" cy="9" r="2.600"/><path d="M16.300 14c3.200 0 5.500 1.800 5.500 5.500h-4.600c0-2-.4-3.800-.9-5.500z"/></svg></span></div>
+      <div class="sp-stat-val" id="vMembers">—</div>
+      <div class="sp-stat-sub c-red" id="sMembers">&nbsp;</div>
+    </article>
+
+    <article class="sp-card sp-stat c-white">
+      <div class="sp-stat-top"><span class="sp-stat-label">ຄຳສັ່ງຊື້ທັງໝົດ</span>
+        <span class="sp-tile t-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></svg></span></div>
+      <div class="sp-stat-val" id="vOrders">—</div>
+      <div class="sp-stat-sub c-blue" id="sOrders">&nbsp;</div>
+    </article>
+
+    <article class="sp-card sp-stat c-purple">
+      <div class="sp-stat-top"><span class="sp-stat-label">ຍອດຂາຍສິນຄ້າສະສົມ</span>
+        <span class="sp-tile t-purple"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.500 8.500h13l1 11.500a1 1 0 0 1-1 1.100H5.500a1 1 0 0 1-1-1.100z"/><path d="M8.800 8.500V7a3.200 3.200 0 0 1 6.400 0v1.500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9.300" cy="12.300" r="1" fill="var(--tile-bg)"/><circle cx="14.700" cy="12.300" r="1" fill="var(--tile-bg)"/></svg></span></div>
+      <div class="sp-stat-val" id="vSales" title="">—</div>
+      <div class="sp-stat-sub" id="sSales">&nbsp;</div>
+    </article>
+
+    <article class="sp-card sp-stat c-yellow">
+      <div class="sp-stat-top"><span class="sp-stat-label">ເຄຣດິດຄ້າງໃນລະບົບ</span>
+        <span class="sp-tile t-yellow"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.500 7.500A2.500 2.500 0 0 1 7 5h10.500v2.500H7z" opacity=".55"/><rect x="3" y="7" width="18" height="12.500" rx="3"/><circle cx="16.800" cy="13.200" r="1.300" fill="var(--tile-bg)"/></svg></span></div>
+      <div class="sp-stat-val" id="vCredit" title="">—</div>
+      <div class="sp-stat-sub" id="sCredit">&nbsp;</div>
+    </article>
+
+    <article class="sp-card sp-stat sp-wide c-red">
+      <div class="sp-stat-top">
+        <span class="sp-stat-label"><span class="sp-eyebrow sm">ເງິນເຕີມລວມ</span>ຍອດເຕີມເງິນລວມທັງໝົດ</span>
+        <span class="sp-tile t-red"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 2.800h6l-1.700 3.200h-2.600z"/><path d="M8.600 7.400h6.800c3 2.800 4.300 5.600 4.300 8.800A4.600 4.600 0 0 1 15 20.800H9a4.600 4.600 0 0 1-4.700-4.600c0-3.200 1.300-6 4.300-8.800z"/><text x="12" y="17.600" text-anchor="middle" font-size="9" font-weight="800" fill="var(--tile-bg)" font-family="Arial,sans-serif">$</text></svg></span>
+      </div>
+      <div class="sp-stat-val" id="vDeposit" title="">—</div>
+      <div class="sp-stat-sub" id="sDeposit">&nbsp;</div>
+    </article>
+
+    <article class="sp-card sp-wide sp-pending" id="spPending">
+      <span class="sp-tile t-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+      <div class="sp-pending-txt"><b id="vPending">—</b><span id="sPending">ລາຍການເຕີມເງິນທີ່ລໍຖ້າກວດສອບ</span></div>
+      <a class="sp-go" href="admin.html">ໄປກວດສອບ</a>
+    </article>
+  </section>
+
+  <!-- ກາຟ 7 ວັນ -->
+  <section class="sp-card sp-chart">
+    <div class="sp-chart-head">
+      <h3>ລາຍໄດ້ 7 ວັນຫຼ້າສຸດ</h3>
+      <div class="sp-legend"><span><i class="lg-red"></i>ຍອດຂາຍ</span><span><i class="lg-blue"></i>ເຕີມເງິນ</span></div>
+    </div>
+    <div class="sp-bars" id="spBars"></div>
+  </section>
+
+  <p class="sp-foot" id="spFoot">&nbsp;</p>
+</main>
+<script src="shop-panel.js"></script>
+</body>
+</html>
