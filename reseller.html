@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+
+<html lang="lo">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport"/>
+<script src="page-loader.js"></script>
+<link rel="stylesheet" href="page-loader.css">
+<title>ສະໝັກຕົວແທນ</title>
+<link href="style.css?v=20261009a" rel="stylesheet"/>
+<link href="tabbar-close-fx.css?v=20261004b" rel="stylesheet"/>
+<link href="auth.css" rel="stylesheet"/>
+<link href="reseller.css" rel="stylesheet"/>
+<link href="page-transition.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700;800&amp;family=Noto+Sans+Lao+Looped:wght@600;700;800&amp;family=Orbitron:wght@600;700;800;900&amp;family=Rajdhani:wght@500;600;700&amp;family=Lilita+One&amp;display=swap" rel="stylesheet" media="print" onload="this.media='all'"/>
+<noscript><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700;800&amp;family=Noto+Sans+Lao+Looped:wght@600;700;800&amp;family=Orbitron:wght@600;700;800;900&amp;family=Rajdhani:wght@500;600;700&amp;family=Lilita+One&amp;display=swap" rel="stylesheet"/></noscript>
+
+<link href="weather-fx.css?v=20261011a" rel="stylesheet"/>
+<link href="home-trial.css?v=9" rel="stylesheet"/>
+<script src="home-trial.js?v=2"></script>
+<link href="discord-widget.css" rel="stylesheet"/>
+<link href="responsive.css?v=20261110a" rel="stylesheet"/>
+<link href="site-bg.css?v=20261110b" rel="stylesheet"/>
+<link href="polish.css?v=3" rel="stylesheet"/>
+<link rel="stylesheet" href="login-modal.css?v=1">
+</head>
+<body>
+<div class="shell">
+<header class="trial-hdr">
+<a class="brand" href="index.html" aria-label="Home">
+<div class="logo has-custom-logo"><img alt="logo" src="assets/logo.png"/></div>
+<span class="brand-name en"></span>
+</a>
+<div class="hdr-actions">
+<a class="hdr-btn hdr-bal" id="trialBal" href="/login.html" aria-label="ຍອດເງິນ">
+<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a1 1 0 0 1 1 1v3"/><path d="M3 5v13a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 12v4h-4a2 2 0 0 1 0-4z"/></svg>
+<span id="trialBalText">0 ₭</span>
+</a>
+<button class="hdr-btn hdr-icon" type="button" id="trialTheme" aria-label="ປ່ຽນທີມ">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e6e6e8" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+</button>
+<button class="hdr-btn hdr-icon login-btn" type="button" aria-label="ເມນູ">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e6e6e8" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+</button>
+</div>
+</header>
+<main class="rs-main">
+<div class="rs-title-row">
+<button aria-label="ກັບໄປໜ້າຫຼັກ" class="rs-back-btn" data-nav-href="index.html" type="button">
+<svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><path d="M15 18l-6-6 6-6"></path></svg>
+</button>
+<h1 class="display-lo u-fs-20">ສະໝັກຕົວແທນ</h1>
+</div>
+<!-- ຍັງບໍ່ໄດ້ login -->
+<div class="rs-card rs-need-login u-hidden" id="rsNeedLogin">
+<p>ກະລຸນາລົງຊື່ເຂົ້າໃຊ້ກ່ອນ ຈຶ່ງຈະໃຊ້ຄີຍ໌ຕົວແທນໄດ້</p>
+<button class="btn-block btn-submit" id="rsGoLoginBtn" type="button">ລົງຊື່ເຂົ້າໃຊ້</button>
+</div>
+<!-- ຟອມໃສ່ຄີຍ໌ -->
+<!-- กำลังโหลดสถานะ (กันฟอร์มโผล่แวบแล้วหายก่อนรู้ว่าเป็นตัวแทนหรือยัง) -->
+<div class="rs-card rs-need-login" id="rsLoading">
+<p id="rsLoadingText">ກຳລັງໂຫຼດ...</p>
+</div>
+<div class="rs-card u-hidden" id="rsFormCard">
+<div class="rs-card-head">
+<svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><line x1="19" x2="5" y1="5" y2="19"></line><circle cx="6.5" cy="6.5" r="2.5"></circle><circle cx="17.5" cy="17.5" r="2.5"></circle></svg>
+<b>ໃສ່ຄີຍ໌ຕົວແທນ</b>
+</div>
+<p class="rs-sub">ໃສ່ຄີຍ໌ຕົວແທນທີ່ໄດ້ຮັບ ເພື່ອປົດລັອກລາຄາພິເສດ</p>
+<form class="p-form" id="rsForm" novalidate="">
+<div class="field" id="rsCodeField">
+<label for="rsCode">ຄີຍ໌ຕົວແທນ</label>
+<div class="field-input">
+<svg fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 24 24"><rect height="10" rx="2" width="18" x="3" y="11"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+<input autocomplete="off" class="u-uppercase" id="rsCode" placeholder="ຕົວຢ່າງ RS-XXXX-XXXX" type="text"/>
+</div>
+<div class="field-error"></div>
+</div>
+<button class="btn-block btn-submit" id="rsSubmitBtn" type="submit">
+<svg fill="none" height="16" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="16"><path d="M20 6 9 17l-5-5"></path></svg>
+          ໃຊ້ຄີຍ໌
+        </button>
+</form>
+</div>
+<!-- ແດຊບອດຕົວແທນ (ໂຊວ໌ເມື່ອເປັນຕົວແທນຢູ່ແລ້ວ) -->
+<div class="u-hidden" id="rsDashboard">
+<div class="rs-card is-reseller">
+<div class="rs-quota-head">
+<div>
+<div class="rs-quota-label">ລະດັບຕົວແທນ</div>
+<div class="rs-quota-tier" id="rsTier">—</div>
+</div>
+<div class="rs-quota-expiry">
+<div class="rs-expiry-label u-hidden" id="rsExpiryStaticLabel">ໝົດອາຍຸ</div>
+<b id="rsExpiry" class="u-hidden">—</b>
+<div class="rs-expiry-label u-hidden" id="rsExpiryLiveLabel"><span class="rs-live-dot"></span>ໝົດອາຍຸໃນ</div>
+<div class="rs-expiry-time u-hidden" id="rsExpiryLive">
+<span class="rs-eh-days"><span id="rsExpD">--</span><span class="rs-eh-days-lbl">ວັນ</span></span><span class="rs-eh-clock"><span id="rsExpH">--</span><span class="rs-eh-colon">:</span><span id="rsExpM">--</span><span class="rs-eh-colon">:</span><span id="rsExpS">--</span></span>
+</div>
+</div>
+</div>
+<div class="rs-quota-body">
+<div class="rs-ring-wrap">
+<svg class="rs-ring" height="104" viewbox="0 0 104 104" width="104">
+<circle class="rs-ring-bg" cx="52" cy="52" r="47"></circle>
+<circle class="rs-ring-fg" cx="52" cy="52" id="rsRingFg" r="47"></circle>
+</svg>
+<div class="rs-ring-mid">
+<b id="rsPct">0%</b>
+<span>ຮອດເປົ້າ</span>
+</div>
+</div>
+<div class="rs-quota-info">
+<div class="rs-quota-amount"><span id="rsCurrent">0</span> <small>/ <span id="rsTarget">0</span> ₭</small></div>
+<div class="rs-quota-sub">ຍອດຊື້ຮອບນີ້ທຽບກັບເປົ້າທີ່ແອດມິນຕັ້ງໄວ້ · ເຫຼືອອີກ <b id="rsRemaining">0 ₭</b> ຮອດເປົ້າ</div>
+</div>
+</div>
+<div class="rs-hold-banner" id="rsHoldBanner">
+<span class="rs-live-dot"></span>
+<span>ຄົບເປົ້າ 100% ແລ້ວ! ຄ້າງໄວ້ 7 ມື້ ກ່ອນຣີເຊັດຮອບໃໝ່ — ອີກ <b id="rsHoldCountdown">—</b></span>
+</div>
+</div>
+<div class="rs-section-label">ມື້ນີ້</div>
+<div class="rs-stats-grid">
+<div class="rs-stat-card">
+<div class="rs-stat-icon up"><svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></div>
+<div class="rs-stat-val"><span id="rsTodayTopup">0</span> <small>₭</small></div>
+<div class="rs-stat-lbl">ເຕີມເງິນມື້ນີ້</div>
+</div>
+<div class="rs-stat-card">
+<div class="rs-stat-icon down"><svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"></path></svg></div>
+<div class="rs-stat-val"><span id="rsTodayPurchase">0</span> <small>₭</small></div>
+<div class="rs-stat-lbl">ຊື້ສິນຄ້າມື້ນີ້</div>
+</div>
+<div class="rs-stat-card">
+<div class="rs-stat-icon up"><svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z"></path><path d="M9 8h6M9 12h6"></path></svg></div>
+<div class="rs-stat-val"><span id="rsTodayOrders">0</span> <small>ຄັ້ງ</small></div>
+<div class="rs-stat-lbl">ອໍເດີມື້ນີ້</div>
+</div>
+<div class="rs-stat-card">
+<div class="rs-stat-icon up"><svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><rect height="13" rx="2" width="18" x="3" y="6"></rect><path d="M3 10h18"></path><path d="M16 14h2"></path></svg></div>
+<div class="rs-stat-val"><span id="rsTodayBalance">0</span> <small>₭</small></div>
+<div class="rs-stat-lbl">ຍອດເງິນຄົງເຫຼືອ</div>
+</div>
+</div>
+<div class="rs-section-label">ສະຫຼຸບທັງໝົດ (ຕັ້ງແຕ່ສະໝັກ)</div>
+<div class="rs-cum-card">
+<div class="rs-cum-row"><span>ເຕີມເງິນສະສົມ</span><b id="rsCumTopup">0 ₭</b></div>
+<div class="rs-cum-row"><span>ຊື້ສິນຄ້າສະສົມ</span><b id="rsCumPurchase">0 ₭</b></div>
+<div class="rs-cum-row"><span>ຈຳນວນອໍເດີ</span><b id="rsCumOrders">0 ຄັ້ງ</b></div>
+<div class="rs-cum-row"><span>ສ່ວນຫຼຸດຕົວແທນ</span><b id="rsCumDiscount">0%</b></div>
+</div>
+</div>
+</main>
+<div class="toast" id="toast"></div>
+<footer class="sf">
+<div class="sf-brand">
+<div class="footer-logo logo"></div>
+<div class="fname en"></div>
+</div>
+<!-- ແກ້ຄຳອະທິບາຍຮ້ານໄດ້ຢູ່ບ່ອນນີ້ -->
+<p class="sf-desc">ຮ້ານຈຳໜ່າຍໂປຣແກຣມຊ່ວຍເລ່ນມືຖື ແລະ ໄກ່ໂຄ້ດເວລ ຕອບໂຈດທຸກການໃຊ້ງານ ບໍລິການວ່ອງໄວ ປອດໄພ ຕະຫຼອດ 24 ຊົ່ວໂມງ</p>
+<div class="sf-cols">
+<div class="sf-col">
+<h4>ລິ້ງດ່ວນ</h4>
+<a href="index.html#categories">ສິນຄ້າທັງໝົດ</a>
+<a href="topup.html">ເຕີມເງິນ</a>
+<a href="orders.html">ປະຫວັດສັ່ງຊື້</a>
+</div>
+<div class="sf-col">
+<h4>ບໍລິການ</h4>
+<a href="leaderboard.html">ຈັດອັນດັບຍອດເຕີມ</a>
+<a href="reseller.html">ສະໝັກຕົວແທນ</a>
+</div>
+</div>
+<!-- discord-widget.js ຈະໃສ່ການ໌ດ Discord ໃນບ່ອນນີ້ -->
+<div id="discord-widget"></div>
+<div class="sf-rule"></div>
+<div class="sf-copy">© 2026 <span class="fcopy-name en"></span></div>
+<nav class="sf-legal">
+<a href="privacy.html">ນະໂຍບາຍຄວາມເປັນສ່ວນຕົວ</a>
+<a href="#footer-social">ຕິດຕໍ່ພວກເຮົາ</a>
+</nav>
+<div class="fsocial" id="footer-social"></div>
+<a class="u-hidden u-fine-print" href="admin.html" id="admin-link">Admin</a>
+</footer>
+</div>
+<script src="page-transition.js?v=2"></script>
+<script src="nav-links.js"></script>
+<script src="storefront-data.js"></script>
+<script src="tabbar-close-fx.js?v=20261004b"></script>
+<script src="script.js?v=20261009a"></script>
+<script src="name-gate.js?v=20261110d" defer></script>
+<script src="reseller.js?v=20261014b"></script>
+<script src="weather-fx.js?v=20261011a" defer></script>
+<script src="/maintenance-watch.js?v=20261014a" defer></script>
+<script src="discord-widget.js" defer></script>
+<script src="login-modal.js?v=1"></script>
+</body>
+</html>
