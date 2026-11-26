@@ -115,6 +115,11 @@ async function route(request, env, ctx) {
       return handleBotTopupDecision(request, env);
     }
 
+    // หน้า "ຈັດການແຜງຮ້ານ" (shop-panel.html) — สถิติสรุปของร้าน เฉพาะแอดมิน
+    if (url.pathname === '/api/admin/shop-stats') {
+      return handleShopStats(request, env);
+    }
+
     // webhook จาก topup.com.la (ผลออเดอร์) — ตอนนี้แค่รับ + log ไม่แตะเงิน/ออเดอร์ใดๆ
     if (url.pathname === '/webhook/topup') {
       return handleTopupWebhook(request);
@@ -4055,4 +4060,35 @@ async function handleTopupWebhook(request) {
     console.log('topup webhook', JSON.stringify(hdr), text);
   } catch (e) { console.error('topup webhook read failed', e); }
   return json({ ok: true }, 200);
+}
+
+
+/* ---------- GET /api/admin/shop-stats ----------
+   สถิติสรุปสำหรับหน้า shop-panel.html (เฉพาะแอดมิน) — คำนวณใน Postgres ด้วย RPC admin_shop_stats()
+   + อายุแพ็กเกจเว็บ: ตั้งตัวแปร SHOP_EXPIRES_AT (เช่น 2026-12-17T18:27:00+07:00) และ SHOP_RENEW_URL ใน Cloudflare */
+async function handleShopStats(request, env) {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const admin = await getSessionUser(request, env);
+  if (!admin || !admin.isAdmin) return json({ error: 'ບໍ່ມີສິດເຂົ້າເຖິງ — ຕ້ອງລ໋ອກອິນເປັນແອດມິນກ່ອນ' }, 403);
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: 'Worker ຍັງບໍ່ໄດ້ຕັ້ງຄ່າ SUPABASE' }, 500);
+  try {
+    const [st, set] = await Promise.all([
+      sbRaw(env, 'POST', 'rpc/admin_shop_stats', {}),
+      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url&limit=1'),
+    ]);
+    if (!st.ok) { console.error('admin_shop_stats failed', st.status, st.text); return json({ error: 'ດຶງສະຖິຕິບໍ່ສຳເລັດ' }, 502); }
+    const s0 = set.ok && Array.isArray(set.data) && set.data[0] ? set.data[0] : {};
+    const exp = env.SHOP_EXPIRES_AT ? Date.parse(env.SHOP_EXPIRES_AT) : NaN;
+    const renew = /^https:\/\//.test(String(env.SHOP_RENEW_URL || '')) ? String(env.SHOP_RENEW_URL) : null;
+    return json({
+      ok: true,
+      stats: st.data,
+      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null },
+      rental: { expires_at: Number.isFinite(exp) ? new Date(exp).toISOString() : null, renew_url: renew },
+      admin: { name: String(admin.username || admin.email || 'A') },
+    });
+  } catch (err) {
+    console.error('handleShopStats failed:', err);
+    return json({ error: 'ເກີດຂໍ້ຜິດພາດ ລອງໃໝ່ອີກຄັ້ງ' }, 502);
+  }
 }
