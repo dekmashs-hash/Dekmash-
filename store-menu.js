@@ -23,6 +23,23 @@
     shield: svg('<path d="M12 2.800 4 6v5.500c0 4.700 3.300 8.300 8 9.700 4.700-1.400 8-5 8-9.700V6z"/><path d="m9 12 2.200 2.200L15.500 10"/>'),
     chat:   svg('<path d="M20.500 11.500a7.800 7.800 0 0 1-.8 3.500 8 8 0 0 1-7.200 4.400 7.800 7.800 0 0 1-3.500-.8L3.500 20.500l1.900-5.200a7.800 7.800 0 0 1-.8-3.500 8 8 0 0 1 4.400-7.200 7.800 7.800 0 0 1 3.500-.8h.5a8 8 0 0 1 7.500 7.500z"/>'),
     out:    svg('<path d="M9.500 20.500H6A2 2 0 0 1 4 18.500v-13a2 2 0 0 1 2-2h3.500"/><path d="m16 16.500 4.500-4.500L16 7.500"/><path d="M20.500 12H9.500"/>'),
+    shop3d: '<svg viewBox="0 0 24 24" aria-hidden="true"><defs>' +
+      '<linearGradient id="smgRoof" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd27a"/><stop offset="1" stop-color="#ff7a18"/></linearGradient>' +
+      '<linearGradient id="smgRoofS" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9a3c"/><stop offset="1" stop-color="#c2410c"/></linearGradient>' +
+      '<linearGradient id="smgFront" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fb8ff"/><stop offset="1" stop-color="#3b6df0"/></linearGradient>' +
+      '<linearGradient id="smgSide" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2f56d6"/><stop offset="1" stop-color="#1b2f86"/></linearGradient>' +
+      '<linearGradient id="smgDoor" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9cffc"/></linearGradient>' +
+      '</defs>' +
+      '<ellipse cx="12" cy="21.6" rx="8.600" ry="1.400" fill="#000" opacity=".28"/>' +
+      '<path d="M17 10.300 21.200 8.600V18.600L17 20.600Z" fill="url(#smgSide)"/>' +
+      '<rect x="3.800" y="10.300" width="13.200" height="10.300" rx="1.100" fill="url(#smgFront)"/>' +
+      '<path d="M16.600 4.400 20.800 2.900 22.200 8.600 17.600 10.300Z" fill="url(#smgRoofS)"/>' +
+      '<path d="M2.600 10.300 4.200 4.400H16.600L17.800 10.300Z" fill="url(#smgRoof)"/>' +
+      '<path d="M7.400 4.400 6.800 10.300M11.200 4.400 11.100 10.300M14.900 4.400 15.400 10.300" stroke="#fff" stroke-width="1.300" stroke-linecap="round" opacity=".85"/>' +
+      '<path d="M2.600 10.300Q4 12.200 5.400 10.300Q6.800 12.200 8.200 10.300Q9.600 12.200 11 10.300Q12.400 12.200 13.800 10.300Q15.200 12.200 16.600 10.300L17.800 10.300" fill="none" stroke="#c2410c" stroke-width=".7" opacity=".55"/>' +
+      '<rect x="8.200" y="14.200" width="4.400" height="6.400" rx=".9" fill="url(#smgDoor)"/>' +
+      '<rect x="5" y="13.800" width="2" height="2.200" rx=".5" fill="#fff" opacity=".55"/>' +
+      '<path d="M4.600 5.400H12" stroke="#fff" stroke-width="1" stroke-linecap="round" opacity=".5"/></svg>',
     x:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"/></svg>',
     right:  svg('<path d="m9 6 6 6-6 6"/>'),
     down:   svg('<path d="m6 9 6 6 6-6"/>'),
@@ -44,7 +61,8 @@
     { key: 'history',  label: 'ປະຫວັດເຕີມເງິນ', href: 'topup-history.html', icon: I.card, chev: true },
     { key: 'profile',  label: 'ໂປຣໄຟລ໌',        href: 'profile.html',       icon: I.user, chev: true },
     { key: 'reseller', label: 'ຕົວແທນ',          href: 'reseller.html',      icon: I.tag,  chev: true },
-    { key: 'admin',    label: 'ແອດມິນ',          href: 'admin.html',         icon: I.shield, chev: true, adminOnly: true }
+    { key: 'admin',    label: 'ແອດມິນ',          href: 'admin.html',         icon: I.shield, chev: true, adminOnly: true },
+    { key: 'shopmanage', label: 'ຈັດການແຜງຮ້ານ',  href: 'admin.html#panelShopManage', icon: I.shop3d, ico3d: true, chev: true, adminOnly: true }
   ];
   var T = {
     title: 'ເມນູຮ້ານຄ້າ', member: 'ສະມາຊິກ', reseller: 'ຕົວແທນ', admin: 'ແອດມິນ',
@@ -78,7 +96,7 @@
 
   function row(it, active) {
     var cls = 'sm-item' + (active ? ' is-active' : '');
-    var inner = '<span class="sm-ico">' + it.icon + '</span><span class="sm-lbl">' + esc(it.label) + '</span>';
+    var inner = '<span class="sm-ico' + (it.ico3d ? ' sm-3d' : '') + '">' + it.icon + '</span><span class="sm-lbl">' + esc(it.label) + '</span>';
     if (it.expand) {
       return '<button type="button" class="' + cls + '" data-expand="' + it.key + '" aria-expanded="false">' + inner +
         '<span class="sm-chev">' + I.down + '</span></button>' +
