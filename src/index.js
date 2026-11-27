@@ -120,6 +120,11 @@ async function route(request, env, ctx) {
       return handleShopStats(request, env);
     }
 
+    // หน้า "ตั้งค่าเว็บไซต์" (shop-settings.html) — บันทึกชื่อเว็บไซต์ เฉพาะแอดมิน
+    if (url.pathname === '/api/admin/site-settings') {
+      return handleSiteSettings(request, env);
+    }
+
     // webhook จาก topup.com.la (ผลออเดอร์) — ตอนนี้แค่รับ + log ไม่แตะเงิน/ออเดอร์ใดๆ
     if (url.pathname === '/webhook/topup') {
       return handleTopupWebhook(request);
@@ -4062,6 +4067,27 @@ async function handleTopupWebhook(request) {
   return json({ ok: true }, 200);
 }
 
+
+/* ---------- POST /api/admin/site-settings ----------
+   บันทึก site_settings.store_name (id=1) จากหน้า shop-settings.html — ตรวจสิทธิ์แอดมินทุกครั้ง */
+async function handleSiteSettings(request, env) {
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  const admin = await getSessionUser(request, env);
+  if (!admin || !admin.isAdmin) return json({ error: 'ไม่มีสิทธิ์เข้าถึง — ต้องล็อกอินเป็นแอดมินก่อน' }, 403);
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: 'Worker ยังไม่ได้ตั้งค่า SUPABASE' }, 500);
+  let body = null;
+  try { body = await request.json(); } catch { return json({ error: 'ข้อมูลไม่ถูกต้อง' }, 400); }
+  const name = String((body && body.store_name) || '').trim();
+  if (!name || name.length > 60) return json({ error: 'ชื่อเว็บไซต์ต้องมี 1–60 ตัวอักษร' }, 400);
+  try {
+    const r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', { store_name: name }, { Prefer: 'return=minimal' });
+    if (!r.ok) { console.error('site-settings patch failed', r.status, r.text); return json({ error: 'บันทึกไม่สำเร็จ' }, 502); }
+    return json({ ok: true, store_name: name });
+  } catch (err) {
+    console.error('handleSiteSettings failed:', err);
+    return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
+  }
+}
 
 /* ---------- GET /api/admin/shop-stats ----------
    สถิติสรุปสำหรับหน้า shop-panel.html (เฉพาะแอดมิน) — คำนวณใน Postgres ด้วย RPC admin_shop_stats()
