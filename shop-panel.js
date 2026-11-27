@@ -143,6 +143,7 @@
       burger.setAttribute('aria-expanded', String(open));
       burger.setAttribute('aria-label', open ? 'ປິດເມນູ' : 'ເມນູ');
     }
+    menu.querySelectorAll('[data-href]').forEach(function (b) { b.addEventListener('click', function () { location.href = b.getAttribute('data-href'); }); });
     burger.addEventListener('click', function (e) {
       e.stopPropagation();
       setMenu(!menu.classList.contains('open'));
