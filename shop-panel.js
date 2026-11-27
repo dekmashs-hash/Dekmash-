@@ -121,10 +121,25 @@
 
   function init() {
     var burger = $('spBurger'), menu = $('spSheet');
+    function setGrp(w, open) {
+      w.classList.toggle('open', open);
+      var b = w.querySelector('.grp'); if (b) b.setAttribute('aria-expanded', String(open));
+    }
+    function collapseAll() { menu.querySelectorAll('.grpw.open').forEach(function (w) { setGrp(w, false); }); }
+    menu.querySelectorAll('.grpw').forEach(function (w) {
+      w.querySelector('.grp').addEventListener('click', function () {
+        if (w.hasAttribute('data-empty')) return;
+        var willOpen = !w.classList.contains('open');
+        menu.querySelectorAll('.grpw.open').forEach(function (o) { if (o !== w) setGrp(o, false); });
+        setGrp(w, willOpen);
+        if (willOpen) setTimeout(function () { w.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 120);
+      });
+    });
     function setMenu(open) {
       menu.classList.toggle('open', open);
       menu.setAttribute('aria-hidden', String(!open));
       if (open) menu.removeAttribute('inert'); else menu.setAttribute('inert', '');
+      if (!open) collapseAll();
       burger.setAttribute('aria-expanded', String(open));
       burger.setAttribute('aria-label', open ? 'ປິດເມນູ' : 'ເມນູ');
     }
