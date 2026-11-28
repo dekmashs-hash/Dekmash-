@@ -4,7 +4,9 @@
   var $ = function (id) { return document.getElementById(id); };
   var TH_M = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var stDoneRes = function () {};
-  var bannerData = null, annLoaded = false, annLast = 45, annOn = true, dcBottom = false;
+  var bannerData = null, annLoaded = false, annLast = 45, annOn = true, dcBottom = false, whyLoaded = false;
+  var WHY_DEF = {"heading": "ເປັນຫຍັງຕ້ອງເລືອກ", "c1_title": "ປອດໄພ ແລະ ໄວ", "c1_desc": "ໃສ່ໃຈຄຸນນະພາບຂອງສິນຄ້າ ແລະ ບໍລິການ ດ້ວຍລະບົບຮັກສາຄວາມປອດໄພທີ່ທັນສະໄໝ ພ້ອມການບໍລິການທີ່ວ່ອງໄວ ແລະ ເຊື່ອຖືໄດ້ຕະຫຼອດ 24 ຊົ່ວໂມງ", "c2_title": "ບໍລິການລູກຄ້າ", "c2_desc": "ທີມງານມືອາຊີບພ້ອມໃຫ້ຄຳປຶກສາ ແລະ ແກ້ໄຂບັນຫາຕະຫຼອດ 24 ຊົ່ວໂມງ ດ້ວຍໃຈທີ່ໃສ່ໃຈໃນທຸກລາຍລະອຽດ ເພື່ອຄວາມພໍໃຈສູງສຸດຂອງລູກຄ້າ"};
+  var WHY_KEYS = ['heading', 'c1_title', 'c1_desc', 'c2_title', 'c2_desc'];
   var rental = { expires_at: null, renew_url: null };
   var shopName = '';
   var logoSrc = null, logoImg = null, logoDirty = false, logoSaved = '';
@@ -71,6 +73,10 @@
           annLoaded = true; annOn = !(j.shop && j.shop.announcement_enabled === false); $('ssAnnText').value = (j.shop && j.shop.announcement) || '';
           var sp = Math.min(300, Math.max(10, +(j.shop && j.shop.announcement_speed) || 45)); $('ssAnnRange').value = sp; renderAnn();
         }
+        if (!whyLoaded) {
+          whyLoaded = true; var wy = (j.shop && j.shop.why) || {};
+          WHY_KEYS.forEach(function (k) { $('ssWhy-' + k).value = (typeof wy[k] === 'string' && wy[k]) ? wy[k] : WHY_DEF[k]; });
+        }
         rental = j.rental || rental;
         renderRental();
       })
@@ -118,7 +124,7 @@
       t.addEventListener('click', function () {
         tabs.forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); });
         ['basic', 'font', 'notice', 'more'].forEach(function (k) { $('ssPanel-' + k).hidden = k !== t.getAttribute('data-tab'); });
-        $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = $('ssPanel-basic4').hidden = $('ssPanel-basic5').hidden = t.getAttribute('data-tab') !== 'basic';
+        $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = $('ssPanel-basic4').hidden = $('ssPanel-basic5').hidden = $('ssPanel-basic6').hidden = t.getAttribute('data-tab') !== 'basic';
         setTimeout(function () { placePika(); placeAnnPika(); annPrevKey = ''; buildAnnPrev(); }, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       });
     });
@@ -339,6 +345,7 @@
       annPikaT = setTimeout(function () { pk.classList.remove('run'); pk.classList.add('idle'); }, 220);
       renderAnn();
     });
+    $('ssWhyReset').addEventListener('click', function () { WHY_KEYS.forEach(function (k) { $('ssWhy-' + k).value = WHY_DEF[k]; }); toast('คืนข้อความเดิมแล้ว — กด "บันทึกการตั้งค่า" เพื่อใช้งาน'); });
     $('ssAnnSw').addEventListener('click', function () { annOn = !annOn; renderAnn(); });
     $('ssAnnText').addEventListener('input', renderAnn);
     placeAnnPika(); renderAnn(); window.addEventListener('resize', function () { placeAnnPika(); annPrevKey = ''; buildAnnPrev(); });
@@ -378,6 +385,7 @@
       if (dcLoaded) { payload.discord_style = dcStyle; payload.discord_bottom = dcBottom; }
       if (stState.loaded) { payload.stats_fake_enabled = stState.enabled; payload.stats_fake = stState.fake; }
       if (bannerData) payload.banner_data = bannerData;
+      if (whyLoaded) { payload.why = {}; WHY_KEYS.forEach(function (k) { var v = $('ssWhy-' + k).value.trim(); payload.why[k] = v === WHY_DEF[k] ? '' : v; }); }
       if (annLoaded) { payload.announcement_text = $('ssAnnText').value; payload.announcement_enabled = annOn; payload.announcement_speed = +$('ssAnnRange').value; }
       if (logoImg && logoDirty) {
         payload.logo_data = drawLogo(+$('ssLogoRange').value); payload.logo_scale = +$('ssLogoRange').value;

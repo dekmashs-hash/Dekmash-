@@ -159,6 +159,14 @@
         const store = (data && data.store) || {};
         fallbackInvite = safeUrl(store.social && store.social.discord);
         dcStyle = store.discordStyle === 'a' || store.discordStyle === 'b' ? store.discordStyle : '';
+        // ข้อความส่วน "ເປັນຫຍັງຕ້ອງເລືອກ" ที่แอดมินแก้ได้ (store.whyContent) — ช่องที่ว่าง = คงข้อความเดิมในหน้า
+        const why = store.whyContent;
+        if (why && typeof why === 'object') {
+          [['heading', 'whyHeading'], ['c1_title', 'why1Title'], ['c1_desc', 'why1Text'], ['c2_title', 'why2Title'], ['c2_desc', 'why2Text']].forEach(([k, id]) => {
+            const el = document.getElementById(id), v = typeof why[k] === 'string' ? why[k].trim() : '';
+            if (el && v) el.textContent = v;
+          });
+        }
         // สวิตช์ย้ายตำแหน่ง: เปิด = ย้ายการ์ด Discord ไปไว้ท้ายเว็บ (เหนือเส้นคั่นลิขสิทธิ์ ในส่วน footer)
         const foot = document.getElementById('homeDiscordFoot');
         if (store.discordBottom === true && dcEl && foot) foot.appendChild(dcEl);

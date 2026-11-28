@@ -171,3 +171,13 @@ body.ss{ font-family:'Noto Sans Thai Looped','Noto Sans Lao',system-ui,sans-seri
 .ss-ann-lb{ display:block; margin-bottom:10px; font-size:14.5px; color:#d6d6da; }
 .ss-ann-prev .hc-ann{ margin:0; }
 .ss-dc-pos{ margin-top:18px; padding-top:16px; border-top:1px solid #1d1d1d; }
+.ss-why-body{ padding-top:0; }
+.ss-why-lb{ margin-top:16px; }
+.ss-why-in, .ss-why-ta{
+  width:100%; border-radius:16px; background:#000; border:1px solid #2a2a2a; color:#fff; padding:0 16px;
+  font:inherit; font-size:15.5px; box-sizing:border-box; transition:border-color .25s, box-shadow .25s;
+}
+.ss-why-in{ height:46px; }
+.ss-why-ta{ min-height:92px; padding:12px 16px; line-height:1.5; resize:vertical; }
+.ss-why-in:focus, .ss-why-ta:focus{ outline:none; border-color:#8f241b; box-shadow:0 0 0 3px rgba(192,40,27,.18); }
+.ss-why-reset{ margin-top:18px; }
