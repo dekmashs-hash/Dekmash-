@@ -58,7 +58,7 @@
         if (document.activeElement !== $('ssName') && !$('ssName').dataset.dirty) $('ssName').value = shopName;
         var logo = j.shop && j.shop.logo;
         if (logo && /^(https:|\/)/.test(logo)) {
-          var box = $('spLogo'); box.textContent = '';
+          var box = $('spLogo'); box.textContent = ''; box.classList.add('has-img');
           var img = new Image(); img.alt = ''; img.src = logo; box.appendChild(img);
         } else { setTxt('spLogoTxt', (shopName || 'D').charAt(0).toUpperCase()); }
         if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; preloadSaved(logoSaved); refreshLogo(); }
@@ -132,21 +132,42 @@
     clearTimeout(pikaT);
     pikaT = setTimeout(function () { pk.classList.remove('run'); pk.classList.add('idle'); }, 220);
   }
-  var baseImg = null, origDirty = false;
+  var baseImg = null, origDirty = false, baseWait = false;
   function loadBlobImg(url, ok, bad) {
-    fetch(url, { mode: 'cors', cache: 'no-store' }).then(function (r) { if (!r.ok) throw 0; return r.blob(); }).then(function (bl) {
+    fetch(url, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { if (!r.ok) throw 0; return r.blob(); }).then(function (bl) {
       var im = new Image(); im.onload = function () { ok(im); }; im.onerror = bad; im.src = URL.createObjectURL(bl);
     }).catch(bad);
+  }
+  // ตัดขอบโปร่งใสของโลโก้เก่าที่เคยบันทึกแบบย่อไว้ (ไม่มีต้นฉบับ) เพื่อให้ 100% = เต็มขนาดรูปจริง
+  function trimImg(im) {
+    try {
+      var w = im.naturalWidth, h = im.naturalHeight, c = document.createElement('canvas'); c.width = w; c.height = h;
+      var g = c.getContext('2d'); g.drawImage(im, 0, 0);
+      var d = g.getImageData(0, 0, w, h).data, x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 12) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < 0 || (x0 === 0 && y0 === 0 && x1 === w - 1 && y1 === h - 1)) return im;
+      var tw = x1 - x0 + 1, th = y1 - y0 + 1, t = document.createElement('canvas'); t.width = tw; t.height = th;
+      t.getContext('2d').drawImage(c, x0, y0, tw, th, 0, 0, tw, th);
+      var out = new Image(); out.src = t.toDataURL('image/png'); return out;
+    } catch (e) { return im; }
+  }
+  function baseReady(im, scale) {
+    baseImg = im;
+    if (baseWait) { baseWait = false; logoImg = baseImg; logoDirty = true; }
+    else if (!logoDirty) { $('ssLogoRange').value = scale; }
+    refreshLogo();
   }
   function preloadSaved(url) {
     baseImg = null; if (!url) return;
     var m = /_s(\d{2,3})\.\w+$/.exec(url), sc = m ? Math.min(100, Math.max(30, +m[1])) : 100;
-    var orig = url.replace(/\/logo\/[^/]+$/, '/logo/original.png');
-    loadBlobImg(orig + '?t=' + Date.now(), function (im) {
-      if (logoSaved !== url) return;
-      baseImg = im; if (!logoDirty) { $('ssLogoRange').value = sc; placePika(); $('ssLogoPct').textContent = sc + '%'; }
-    }, function () {   // โลโก้เก่าที่ไม่มีต้นฉบับ -> ใช้ภาพที่บันทึกไว้เป็นฐาน 100%
-      loadBlobImg(url, function (im) { if (logoSaved === url) baseImg = im; }, function () {});
+    loadBlobImg('/api/admin/site-logo?which=original&t=' + Date.now(), function (im) {
+      if (logoSaved === url) baseReady(im, sc);
+    }, function () {   // โลโก้เก่าที่ไม่มีต้นฉบับ -> ใช้ภาพที่บันทึกไว้ (ตัดขอบโปร่งใสออก) เป็นฐาน 100%
+      loadBlobImg('/api/admin/site-logo?which=current&t=' + Date.now(), function (im) {
+        if (logoSaved !== url) return;
+        var t = trimImg(im);
+        if (t.complete || t === im) baseReady(t, 100); else t.onload = function () { if (logoSaved === url) baseReady(t, 100); };
+      }, function () { baseWait = false; });
     });
   }
   function origData(im) {
@@ -175,6 +196,7 @@
     $('ssLogoRange').addEventListener('input', function () {
       pikaRun(+this.value);
       if (!logoImg && baseImg) { logoImg = baseImg; }   // ใช้โลโก้ที่บันทึกไว้เป็นต้นฉบับ (โหลดเตรียมไว้แล้ว)
+      else if (!logoImg && logoSaved) { baseWait = true; }  // ต้นฉบับยังโหลดไม่เสร็จ — พอเสร็จจะใช้ค่าแถบเลื่อนตอนนั้นทันที
       logoDirty = !!logoImg; refreshLogo();
     });
     $('ssPika').classList.add('idle'); placePika(); window.addEventListener('resize', placePika);
@@ -215,7 +237,7 @@
         .then(function (x) {
           if (!x.ok || !x.j || !x.j.ok) throw new Error((x.j && x.j.error) || 'บันทึกไม่สำเร็จ');
           if (x.j.logo_url) { var keep = +$('ssLogoRange').value; logoSaved = x.j.logo_url; origDirty = false; if (logoImg) baseImg = logoImg; logoImg = null; logoDirty = false; $('ssLogoRange').value = keep; refreshLogo();
-            var lb = $('spLogo'); lb.textContent = ''; var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
+            var lb = $('spLogo'); lb.textContent = ''; lb.classList.add('has-img'); var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
           shopName = name; setTxt('spName', name); delete $('ssName').dataset.dirty; renderRental();
           toast('บันทึกการตั้งค่าแล้ว');
         })
