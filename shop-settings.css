@@ -170,3 +170,4 @@ body.ss{ font-family:'Noto Sans Thai Looped','Noto Sans Lao',system-ui,sans-seri
 .ss-ann-form.off .ss-ann-prev .hc-ann{ opacity:.35; }
 .ss-ann-lb{ display:block; margin-bottom:10px; font-size:14.5px; color:#d6d6da; }
 .ss-ann-prev .hc-ann{ margin:0; }
+.ss-dc-pos{ margin-top:18px; padding-top:16px; border-top:1px solid #1d1d1d; }

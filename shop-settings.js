@@ -4,7 +4,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var TH_M = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var stDoneRes = function () {};
-  var bannerData = null, annLoaded = false, annLast = 45, annOn = true;
+  var bannerData = null, annLoaded = false, annLast = 45, annOn = true, dcBottom = false;
   var rental = { expires_at: null, renew_url: null };
   var shopName = '';
   var logoSrc = null, logoImg = null, logoDirty = false, logoSaved = '';
@@ -65,7 +65,7 @@
         } else { setTxt('spLogoTxt', (shopName || 'D').charAt(0).toUpperCase()); }
         if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; refreshLogo(); var sv = logoSaved; stDone.then(function () { if (logoSaved === sv && !logoDirty) preloadSaved(sv); }); }
         setTxt('spAvatar', String((j.admin && j.admin.name) || 'A').charAt(0).toUpperCase());
-        if (!dcLoaded) { dcStyle = (j.shop && j.shop.discord_style) || 'classic'; dcLoaded = true; renderDc(); }
+        if (!dcLoaded) { dcStyle = (j.shop && j.shop.discord_style) || 'classic'; dcBottom = !!(j.shop && j.shop.discord_bottom); dcLoaded = true; renderDc(); renderDcPos(); }
         if (!bannerData) { var bn = j.shop && j.shop.banner; var bp = $('ssPreview'); if (bn && /^(https:|\/)/.test(bn)) { bp.src = bn; bp.hidden = false; $('ssDrop').classList.add('has'); } }
         if (!annLoaded) {
           annLoaded = true; annOn = !(j.shop && j.shop.announcement_enabled === false); $('ssAnnText').value = (j.shop && j.shop.announcement) || '';
@@ -243,8 +243,14 @@
         '<div class="ss-dc-prev" aria-hidden="true">' + dcSample(o.c) + '</div></div>';
     }).join('');
   }
+  function renderDcPos() {
+    var sw = $('ssDcPos'); if (!sw) return;
+    sw.setAttribute('aria-checked', String(dcBottom));
+    $('ssDcPosHint').textContent = dcBottom ? 'เปิด = แสดงการ์ดไว้ท้ายเว็บ เหนือเส้นคั่นลิขสิทธิ์' : 'ปิด = อยู่ใต้การ์ดสถิติ (ตำแหน่งเดิม)';
+  }
   function initDc() {
     renderDc();
+    $('ssDcPos').addEventListener('click', function () { dcBottom = !dcBottom; renderDcPos(); });
     $('ssDcOpts').addEventListener('keydown', function (e) {
       if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('ss-dc-opt')) { e.preventDefault(); e.target.click(); }
     });
@@ -369,7 +375,7 @@
       if (!name) { toast('กรุณากรอกชื่อเว็บไซต์'); $('ssName').focus(); return; }
       btn.disabled = true;
       var payload = { store_name: name };
-      if (dcLoaded) payload.discord_style = dcStyle;
+      if (dcLoaded) { payload.discord_style = dcStyle; payload.discord_bottom = dcBottom; }
       if (stState.loaded) { payload.stats_fake_enabled = stState.enabled; payload.stats_fake = stState.fake; }
       if (bannerData) payload.banner_data = bannerData;
       if (annLoaded) { payload.announcement_text = $('ssAnnText').value; payload.announcement_enabled = annOn; payload.announcement_speed = +$('ssAnnRange').value; }

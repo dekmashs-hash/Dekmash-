@@ -159,6 +159,9 @@
         const store = (data && data.store) || {};
         fallbackInvite = safeUrl(store.social && store.social.discord);
         dcStyle = store.discordStyle === 'a' || store.discordStyle === 'b' ? store.discordStyle : '';
+        // สวิตช์ย้ายตำแหน่ง: เปิด = ย้ายการ์ด Discord ไปไว้ท้ายเว็บ (เหนือเส้นคั่นลิขสิทธิ์ ในส่วน footer)
+        const foot = document.getElementById('homeDiscordFoot');
+        if (store.discordBottom === true && dcEl && foot) foot.appendChild(dcEl);
         renderAnnounce(store.announcement, store.announcementSpeed);
       })
       .catch(() => {})

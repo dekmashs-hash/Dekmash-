@@ -149,3 +149,7 @@
   .hc-dc-name{ font-size:15px; }
   .hc-dc-act > *{ font-size:14px; }
 }
+
+/* การ์ด Discord ที่ถูกย้ายมาไว้ท้ายเว็บ (ใน footer) */
+.sf-dc:empty{ display:none; }
+.sf-dc .hc-dc{ margin:22px 0 4px; }
