@@ -2119,8 +2119,9 @@ async function handlePublicStorefront(request, env, opts) {
       }),
       getRegisteredUserCount(env),
       getSoldCount(env),
-      getSoldCountsByProductName(env),
-      getActivePromotions(env),
+      // opts.raw = หน้าแอดมินขอแค่ 4 ตัวเลขสถิติ -> ข้าม 2 อย่างนี้ (ไล่นับออเดอร์ทีละ 1000 แถว + โปรโมชั่น) ซึ่งช้ามาก
+      (opts && opts.raw) ? Promise.resolve(new Map()) : getSoldCountsByProductName(env),
+      (opts && opts.raw) ? Promise.resolve({ list: [], byProduct: new Map() }) : getActivePromotions(env),
     ]);
 
     const settings = settingsRows[0] || {};
@@ -4156,22 +4157,30 @@ async function handleSiteSettings(request, env) {
 
 /* ---------- GET /api/admin/home-stats ----------
    หน้า "ตั้งค่าเว็บไซต์": ตัวเลขจริงของ 4 การ์ดสถิติ + ค่าจำลองที่ตั้งไว้ + สถานะสวิตช์ (เฉพาะแอดมิน, ไม่ผ่าน cache) */
+let HOME_STATS_CACHE = { at: 0, real: null };
 async function handleHomeStats(request, env) {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const admin = await getSessionUser(request, env);
   if (!admin || !admin.isAdmin) return json({ error: 'ไม่มีสิทธิ์เข้าถึง' }, 403);
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: 'Worker ยังไม่ได้ตั้งค่า SUPABASE' }, 500);
   try {
+    // ตัวเลขจริงคำนวณหนัก -> จำไว้ใน isolate 30 วินาที (ค่าจำลองที่แอดมินตั้งอ่านสดทุกครั้งเสมอ)
+    const cached = HOME_STATS_CACHE.real && Date.now() - HOME_STATS_CACHE.at < 30000 ? HOME_STATS_CACHE.real : null;
     const [pub, set] = await Promise.all([
-      handlePublicStorefront(request, env, { raw: true }).then((r) => r.json()),
+      cached ? Promise.resolve(null) : handlePublicStorefront(request, env, { raw: true }).then((r) => r.json()),
       sbRaw(env, 'GET', 'site_settings?id=eq.1&select=stats_fake_enabled,stats_fake_users,stats_fake_products,stats_fake_stock,stats_fake_sold&limit=1'),
     ]);
-    if (!pub || !pub.stats) return json({ error: 'ดึงสถิติไม่สำเร็จ' }, 502);
+    let real = cached;
+    if (!real) {
+      if (!pub || !pub.stats) return json({ error: 'ดึงสถิติไม่สำเร็จ' }, 502);
+      real = { users: pub.stats.userCount || 0, products: pub.stats.productCount || 0, stock: pub.stats.totalStock || 0, sold: pub.stats.totalSold || 0 };
+      HOME_STATS_CACHE = { at: Date.now(), real };
+    }
     const f = set.ok && Array.isArray(set.data) && set.data[0] ? set.data[0] : {};
     return json({
       ok: true,
       enabled: f.stats_fake_enabled === true,
-      real: { users: pub.stats.userCount || 0, products: pub.stats.productCount || 0, stock: pub.stats.totalStock || 0, sold: pub.stats.totalSold || 0 },
+      real,
       fake: { users: Number(f.stats_fake_users) || 0, products: Number(f.stats_fake_products) || 0, stock: Number(f.stats_fake_stock) || 0, sold: Number(f.stats_fake_sold) || 0 },
     });
   } catch (err) {
@@ -4216,8 +4225,10 @@ async function handleShopStats(request, env) {
   if (!admin || !admin.isAdmin) return json({ error: 'ບໍ່ມີສິດເຂົ້າເຖິງ — ຕ້ອງລ໋ອກອິນເປັນແອດມິນກ່ອນ' }, 403);
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: 'Worker ຍັງບໍ່ໄດ້ຕັ້ງຄ່າ SUPABASE' }, 500);
   try {
+    // ?lite=1 (หน้าตั้งค่าเว็บไซต์) ไม่ต้องใช้ตัวเลขสถิติ -> ข้าม RPC admin_shop_stats ที่หนัก
+    const lite = new URL(request.url).searchParams.get('lite') === '1';
     const [st, set] = await Promise.all([
-      sbRaw(env, 'POST', 'rpc/admin_shop_stats', {}),
+      lite ? Promise.resolve({ ok: true, data: null }) : sbRaw(env, 'POST', 'rpc/admin_shop_stats', {}),
       sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url,discord_card_style&limit=1'),
     ]);
     if (!st.ok) { console.error('admin_shop_stats failed', st.status, st.text); return json({ error: 'ດຶງສະຖິຕິບໍ່ສຳເລັດ' }, 502); }
