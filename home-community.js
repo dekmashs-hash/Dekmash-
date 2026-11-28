@@ -54,12 +54,12 @@
     const k = Math.max(1, Math.ceil((win.clientWidth || 1) / w));
     track.innerHTML = group(k) + group(k); // 2 ชุด -> translateX(-50%) วนต่อเนื่องพอดี
     fill();
-    track.style.setProperty('--hc-dur', Math.max(8, (w * k) / annSpeed).toFixed(1) + 's');
+    track.style.setProperty('--hc-dur', Math.max(1, (w * k) / annSpeed).toFixed(1) + 's');
   }
 
   function renderAnnounce(raw, speed) {
     if (!annEl) return;
-    const sp = Math.min(120, Math.max(10, Number(speed) || MARQUEE_SPEED));
+    const sp = Math.min(300, Math.max(10, Number(speed) || MARQUEE_SPEED));
     const speedChanged = sp !== annSpeed;
     annSpeed = sp;
     const text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
