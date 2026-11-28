@@ -1,0 +1,106 @@
+/* =====================================================================
+   discord-variants.css — ดีไซน์การ์ด Discord หน้าแรก (เลือกใช้ทีละแบบ)
+   ใส่คลาสที่ #homeDiscord:  dcv-a = "Neon Glass"   |   dcv-b = "Banner"
+   ใช้คู่กับ home-community.css (โหลดทีหลังเพื่อทับ)
+   ===================================================================== */
+
+/* ---------- A · Neon Glass ---------- */
+.hc-dc.dcv-a{
+  padding:16px; border-radius:22px; border:1px solid transparent;
+  background:
+    linear-gradient(#0a0a0c,#0a0a0c) padding-box,
+    linear-gradient(135deg,rgba(255,0,1,.55),rgba(88,101,242,.55) 55%,rgba(255,255,255,.06)) border-box;
+  box-shadow:0 18px 40px -22px rgba(88,101,242,.55), 0 0 0 1px rgba(255,255,255,.02) inset;
+  overflow:hidden; isolation:isolate;
+}
+.hc-dc.dcv-a::before{
+  content:""; position:absolute; z-index:-1; inset:0; pointer-events:none;
+  background:
+    radial-gradient(circle at 0% 0%,rgba(255,0,1,.20),transparent 52%),
+    radial-gradient(circle at 100% 100%,rgba(88,101,242,.26),transparent 55%);
+}
+.dcv-a .hc-dc-ico{
+  width:48px; height:48px; border-radius:15px;
+  background:linear-gradient(145deg,#7a86ff,#4752e0);
+  box-shadow:0 8px 22px -6px rgba(88,101,242,.9), inset 0 1px 0 rgba(255,255,255,.35);
+  animation:dcv-float 3.6s ease-in-out infinite;
+}
+.dcv-a .hc-dc-ico svg{ width:27px; height:27px; }
+@keyframes dcv-float{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-2.5px); } }
+.dcv-a .hc-dc-name{ font-size:18px; letter-spacing:.3px; }
+.dcv-a .hc-dc-on{
+  display:inline-flex; margin-top:5px; padding:3px 10px 3px 9px; border-radius:999px;
+  background:rgba(59,165,93,.12); border:1px solid rgba(59,165,93,.28); color:#7be0a0; font-size:12.5px;
+}
+.dcv-a .hc-dc-on i{ position:relative; background:#3ba55d; }
+.dcv-a .hc-dc-on i::after{ content:""; position:absolute; inset:-3px; border-radius:50%; background:#3ba55d; opacity:.5; animation:dcv-ping 1.8s ease-out infinite; }
+@keyframes dcv-ping{ from{ transform:scale(.6); opacity:.6; } to{ transform:scale(2.2); opacity:0; } }
+.dcv-a .hc-dc-stack > *{ width:30px; height:30px; border-color:#0d0d12; margin-left:-9px; }
+.dcv-a .hc-dc-stack .hc-dc-more svg{ width:14px; height:14px; }
+.dcv-a .hc-dc-act{ margin-top:16px; gap:10px; }
+.dcv-a .hc-dc-act > *{ height:44px; border-radius:14px; }
+.dcv-a .hc-dc-mem{ background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+.dcv-a .hc-dc-join{
+  position:relative; overflow:hidden; font-weight:600;
+  background:linear-gradient(135deg,#6c78ff,#4752e0);
+  box-shadow:0 10px 24px -8px rgba(88,101,242,.9), inset 0 1px 0 rgba(255,255,255,.3);
+}
+.dcv-a .hc-dc-join::after{
+  content:""; position:absolute; top:0; bottom:0; width:40%; left:-60%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);
+  transform:skewX(-18deg); animation:dcv-shine 3.8s ease-in-out infinite;
+}
+@keyframes dcv-shine{ 0%,55%{ left:-60%; } 100%{ left:130%; } }
+
+/* ---------- B · Banner ---------- */
+.hc-dc.dcv-b{ padding:0; border-radius:22px; overflow:hidden; border:1px solid #23232a; background:#0b0b0d; box-shadow:0 18px 36px -24px rgba(0,0,0,.9); }
+.dcv-b .hc-dc-top{
+  position:relative; padding:18px 16px 22px; gap:13px; overflow:hidden;
+  background:
+    radial-gradient(120% 140% at 100% 0%,rgba(255,60,60,.40),transparent 55%),
+    linear-gradient(135deg,#5865f2 0%,#3a3fb0 48%,#5a0a0c 100%);
+}
+.dcv-b .hc-dc-top::before{   /* ลายตารางจางๆ */
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.35;
+  background-image:linear-gradient(rgba(255,255,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.07) 1px,transparent 1px);
+  background-size:22px 22px; -webkit-mask-image:linear-gradient(120deg,transparent 20%,#000 90%); mask-image:linear-gradient(120deg,transparent 20%,#000 90%);
+}
+.dcv-b .hc-dc-top::after{    /* วงแสงมุมล่าง */
+  content:""; position:absolute; width:180px; height:180px; right:-60px; bottom:-110px; border-radius:50%;
+  background:radial-gradient(circle,rgba(255,255,255,.22),transparent 65%); pointer-events:none;
+}
+.dcv-b .hc-dc-top > *{ position:relative; z-index:1; }
+.dcv-b .hc-dc-ico{ width:52px; height:52px; border-radius:16px; background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.28); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px); box-shadow:0 8px 20px -8px rgba(0,0,0,.6); }
+.dcv-b .hc-dc-ico svg{ width:29px; height:29px; }
+.dcv-b .hc-dc-name{ font-size:18px; color:#fff; text-shadow:0 2px 10px rgba(0,0,0,.35); }
+.dcv-b .hc-dc-on{ margin-top:4px; color:rgba(255,255,255,.88); font-size:13px; }
+.dcv-b .hc-dc-on i{ background:#4ade80; box-shadow:0 0 0 3px rgba(74,222,128,.25); animation:dcv-blink 1.8s ease-in-out infinite; }
+@keyframes dcv-blink{ 50%{ box-shadow:0 0 0 6px rgba(74,222,128,0); } }
+.dcv-b .hc-dc-stack > *{ width:27px; height:27px; border-color:rgba(255,255,255,.9); margin-left:-9px; }
+.dcv-b .hc-dc-stack .hc-dc-more{ background:rgba(20,20,40,.7); }
+.dcv-b .hc-dc-stack .hc-dc-more svg{ width:14px; height:14px; }
+.dcv-b .hc-dc-act{
+  position:relative; margin:-12px 12px 0; padding:8px; gap:8px; border-radius:18px;
+  background:#101013; border:1px solid #26262d; box-shadow:0 12px 24px -14px rgba(0,0,0,.9);
+}
+.dcv-b .hc-dc-act > *{ height:42px; border-radius:12px; }
+.dcv-b .hc-dc-mem{ background:#17171b; border:1px solid #26262d; }
+.dcv-b .hc-dc-join{
+  position:relative; overflow:hidden; font-weight:600;
+  background:linear-gradient(135deg,#ff2a2b,#c40d0f); box-shadow:0 8px 20px -8px rgba(255,0,1,.8), inset 0 1px 0 rgba(255,255,255,.28);
+}
+.dcv-b .hc-dc-join::after{
+  content:""; position:absolute; top:0; bottom:0; width:40%; left:-60%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent); transform:skewX(-18deg); animation:dcv-shine 3.8s ease-in-out infinite;
+}
+.dcv-b .hc-dc-list{ margin:0 12px; }
+.dcv-b .hc-dc-list-in{ padding:6px 4px; }
+.dcv-b::after{ content:""; display:block; height:12px; }
+
+@media (prefers-reduced-motion:reduce){
+  .dcv-a .hc-dc-ico,.dcv-a .hc-dc-on i::after,.dcv-a .hc-dc-join::after,.dcv-b .hc-dc-on i,.dcv-b .hc-dc-join::after{ animation:none; }
+}
+
+/* กันข้อความปุ่มล้นในจอแคบ */
+.dcv-a .hc-dc-act > *, .dcv-b .hc-dc-act > *{ min-width:0; white-space:nowrap; font-size:14px; padding:0 8px; gap:6px; }
+.dcv-a .hc-dc-join svg, .dcv-b .hc-dc-join svg{ width:18px; height:18px; }

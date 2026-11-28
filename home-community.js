@@ -85,6 +85,7 @@
   const dcEl = document.getElementById('homeDiscord');
   let fallbackInvite = ''; // ลิงก์ Discord จาก ตັ້ງຄ່າຮ້ານ (ใช้เมื่อ widget ไม่มีลิงก์เชิญ)
   let rendered = false;
+  let dcStyle = ''; // '' = ดีไซน์เดิม | 'a' = Neon Glass | 'b' = Banner (ตั้งใน ตั้งค่าเว็บไซต์)
 
   function renderDiscord(d) {
     if (!dcEl) return;
@@ -105,7 +106,7 @@
       : `<div class="hc-dc-empty">${T.empty}</div>`;
 
     const wasOpen = dcEl.classList.contains('open');
-    dcEl.className = 'hc-dc' + (wasOpen ? ' open' : '');
+    dcEl.className = 'hc-dc' + (dcStyle ? ' dcv-' + dcStyle : '') + (wasOpen ? ' open' : '');
     dcEl.innerHTML = `
       <div class="hc-dc-top">
         <div class="hc-dc-ico">${ICON_DC}</div>
@@ -153,6 +154,7 @@
       .then((data) => {
         const store = (data && data.store) || {};
         fallbackInvite = safeUrl(store.social && store.social.discord);
+        dcStyle = store.discordStyle === 'a' || store.discordStyle === 'b' ? store.discordStyle : '';
         renderAnnounce(store.announcement);
       })
       .catch(() => {})

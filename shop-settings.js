@@ -63,6 +63,7 @@
         } else { setTxt('spLogoTxt', (shopName || 'D').charAt(0).toUpperCase()); }
         if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; preloadSaved(logoSaved); refreshLogo(); }
         setTxt('spAvatar', String((j.admin && j.admin.name) || 'A').charAt(0).toUpperCase());
+        if (!dcLoaded) { dcStyle = (j.shop && j.shop.discord_style) || 'classic'; dcLoaded = true; renderDc(); }
         rental = j.rental || rental;
         renderRental();
       })
@@ -110,7 +111,7 @@
       t.addEventListener('click', function () {
         tabs.forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); });
         ['basic', 'font', 'notice', 'more'].forEach(function (k) { $('ssPanel-' + k).hidden = k !== t.getAttribute('data-tab'); });
-        $('ssPanel-basic2').hidden = t.getAttribute('data-tab') !== 'basic';
+        $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = t.getAttribute('data-tab') !== 'basic';
         setTimeout(placePika, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       });
     });
@@ -212,6 +213,40 @@
     });
   }
 
+  /* ---------- ดีไซน์การ์ด Discord หน้าแรก (ติ๊กเลือก 1 แบบ) ---------- */
+  var DC_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></svg>';
+  var dcStyle = 'classic', dcLoaded = false;
+  var DC_OPTS = [
+    { v: 'classic', t: 'ดีไซน์เดิม', c: '' },
+    { v: 'a', t: 'A · Neon Glass', c: ' dcv-a' },
+    { v: 'b', t: 'B · Banner', c: ' dcv-b' }
+  ];
+  function dcAv(c, t) { return 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="' + c + '"/><text x="20" y="26" text-anchor="middle" font-size="18" font-family="sans-serif" fill="#fff">' + t + '</text></svg>'); }
+  function dcSample(cls) {
+    return '<div class="hc-dc' + cls + '"><div class="hc-dc-top"><div class="hc-dc-ico">' + DC_ICON + '</div><div class="hc-dc-info"><div class="hc-dc-name">' + (shopName || 'DEK MASH').replace(/[<>&"]/g, '') + '</div><div class="hc-dc-on"><i></i><span>ອອນລາຍ 35 ຄົນ</span></div></div>' +
+      '<div class="hc-dc-stack"><img alt="" src="' + dcAv('#c0392b', 'A') + '"><img alt="" src="' + dcAv('#2980b9', 'B') + '"><img alt="" src="' + dcAv('#8e44ad', 'C') + '"><span class="hc-dc-more">' + DC_ICON + '</span></div></div>' +
+      '<div class="hc-dc-act"><button class="hc-dc-mem" type="button" tabindex="-1">ເບິ່ງສະມາຊິກ</button><a class="hc-dc-join">' + DC_ICON + 'ເຂົ້າຮ່ວມ Discord</a></div></div>';
+  }
+  function renderDc() {
+    var box = $('ssDcOpts'); if (!box) return;
+    box.innerHTML = DC_OPTS.map(function (o) {
+      var on = o.v === dcStyle;
+      return '<div class="ss-dc-opt' + (on ? ' on' : '') + '" role="radio" tabindex="0" aria-checked="' + on + '" data-v="' + o.v + '">' +
+        '<div class="ss-dc-head"><span class="ss-dc-tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.500 4.500 4.500L19 7.500"/></svg></span><b>' + o.t + '</b></div>' +
+        '<div class="ss-dc-prev" aria-hidden="true">' + dcSample(o.c) + '</div></div>';
+    }).join('');
+  }
+  function initDc() {
+    renderDc();
+    $('ssDcOpts').addEventListener('keydown', function (e) {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('ss-dc-opt')) { e.preventDefault(); e.target.click(); }
+    });
+    $('ssDcOpts').addEventListener('click', function (e) {
+      var b = e.target.closest('.ss-dc-opt'); if (!b) return;
+      dcStyle = b.getAttribute('data-v'); dcLoaded = true; renderDc();
+    });
+  }
+
   /* ---------- ฟอร์ม ---------- */
   function initForm() {
     $('ssName').addEventListener('input', function () { this.dataset.dirty = '1'; });
@@ -228,6 +263,7 @@
       if (!name) { toast('กรุณากรอกชื่อเว็บไซต์'); $('ssName').focus(); return; }
       btn.disabled = true;
       var payload = { store_name: name };
+      if (dcLoaded) payload.discord_style = dcStyle;
       if (logoImg && logoDirty) {
         payload.logo_data = drawLogo(+$('ssLogoRange').value); payload.logo_scale = +$('ssLogoRange').value;
         if (origDirty) payload.logo_orig = origData(logoImg);
@@ -251,7 +287,7 @@
     });
   }
 
-  initMenu(); initTabs(); initForm(); initLogo();
+  initMenu(); initTabs(); initForm(); initLogo(); initDc();
   fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
     if (!j || !j.loggedIn || !j.user || !j.user.isAdmin) { location.replace('index.html'); return; }
     load();
