@@ -111,7 +111,7 @@
       t.addEventListener('click', function () {
         tabs.forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); });
         ['basic', 'font', 'notice', 'more'].forEach(function (k) { $('ssPanel-' + k).hidden = k !== t.getAttribute('data-tab'); });
-        $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = t.getAttribute('data-tab') !== 'basic';
+        $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = $('ssPanel-basic4').hidden = t.getAttribute('data-tab') !== 'basic';
         setTimeout(placePika, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       });
     });
@@ -247,6 +247,44 @@
     });
   }
 
+  /* ---------- สถิติหน้าแรก: สวิตช์ ตัวเลขจำลอง (เปิด = แก้เลขเองได้ / ปิด = ใช้เลขจริง) ---------- */
+  var stState = { enabled: false, real: { users: 0, products: 0, stock: 0, sold: 0 }, fake: { users: 0, products: 0, stock: 0, sold: 0 }, loaded: false };
+  var ST_KEYS = ['users', 'products', 'stock', 'sold'];
+  function fmtN(n) { return Number(n || 0).toLocaleString('en-US'); }
+  function renderSt() {
+    var sw = $('ssStSw'); if (!sw) return;
+    sw.setAttribute('aria-checked', String(stState.enabled));
+    $('ssStats').classList.toggle('edit', stState.enabled);
+    $('ssStHint').textContent = stState.enabled ? 'เปิด = แสดงตัวเลขจำลองที่คุณตั้งเอง (แตะตัวเลขเพื่อแก้)' : 'ปิด = แสดงตัวเลขจริงของร้าน';
+    ST_KEYS.forEach(function (k) {
+      var el = $('ssSt-' + k); el.readOnly = !stState.enabled;
+      if (document.activeElement !== el) el.value = fmtN(stState.enabled ? stState.fake[k] : stState.real[k]);
+    });
+  }
+  function initSt() {
+    $('ssStSw').addEventListener('click', function () {
+      if (!stState.loaded) { toast('กำลังโหลดตัวเลข…'); return; }
+      stState.enabled = !stState.enabled;
+      // เปิดครั้งแรกที่ยังไม่เคยตั้งเลข -> เริ่มจากตัวเลขจริงให้แก้ต่อได้เลย
+      if (stState.enabled && ST_KEYS.every(function (k) { return !stState.fake[k]; })) ST_KEYS.forEach(function (k) { stState.fake[k] = stState.real[k]; });
+      renderSt();
+    });
+    ST_KEYS.forEach(function (k) {
+      var el = $('ssSt-' + k);
+      el.addEventListener('focus', function () { if (stState.enabled) { el.value = String(stState.fake[k] || ''); try { el.select(); } catch (e) {} } });
+      el.addEventListener('input', function () {
+        var d = el.value.replace(/\D/g, '').slice(0, 9); el.value = d; stState.fake[k] = d ? +d : 0;
+      });
+      el.addEventListener('blur', function () { renderSt(); });
+    });
+  }
+  function loadSt() {
+    return fetch('/api/admin/home-stats', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) throw 0;
+      stState.enabled = !!j.enabled; stState.real = j.real; stState.fake = j.fake; stState.loaded = true; renderSt();
+    }).catch(function () { setTxt('ssStHint', 'โหลดตัวเลขไม่สำเร็จ — รีเฟรชหน้านี้'); });
+  }
+
   /* ---------- ฟอร์ม ---------- */
   function initForm() {
     $('ssName').addEventListener('input', function () { this.dataset.dirty = '1'; });
@@ -264,6 +302,7 @@
       btn.disabled = true;
       var payload = { store_name: name };
       if (dcLoaded) payload.discord_style = dcStyle;
+      if (stState.loaded) { payload.stats_fake_enabled = stState.enabled; payload.stats_fake = stState.fake; }
       if (logoImg && logoDirty) {
         payload.logo_data = drawLogo(+$('ssLogoRange').value); payload.logo_scale = +$('ssLogoRange').value;
         if (origDirty) payload.logo_orig = origData(logoImg);
@@ -287,10 +326,10 @@
     });
   }
 
-  initMenu(); initTabs(); initForm(); initLogo(); initDc();
+  initMenu(); initTabs(); initForm(); initLogo(); initDc(); initSt();
   fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
     if (!j || !j.loggedIn || !j.user || !j.user.isAdmin) { location.replace('index.html'); return; }
-    load();
+    load(); loadSt();
   }).catch(function () { location.replace('index.html'); });
   setInterval(renderRental, 30000);
 })();

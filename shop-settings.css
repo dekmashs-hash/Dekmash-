@@ -133,3 +133,26 @@ body.ss{ font-family:'Noto Sans Thai Looped','Noto Sans Lao',system-ui,sans-seri
 .ss-dc-prev{ display:block; pointer-events:none; }
 .ss-dc-opt:focus-visible{ outline:2px solid #ff7a66; outline-offset:2px; }
 .ss-dc-prev .hc-dc{ margin:0; }
+
+/* ---------- สถิติหน้าแรก 4 การ์ด + สวิตช์ตัวเลขจำลอง ---------- */
+.ss-st-body{ padding-top:0; }
+.ss-sw-row{ display:flex; align-items:center; justify-content:space-between; gap:14px; }
+.ss-sw-tx label{ margin-bottom:3px !important; }
+.ss-sw-tx small{ display:block; font-size:12.5px; color:#7d7d84; }
+.ss-sw{ position:relative; flex:0 0 auto; width:54px; height:32px; border-radius:999px; border:1px solid #2c2c2c; background:#141416; cursor:pointer; transition:background .25s, border-color .25s, box-shadow .25s; padding:0; }
+.ss-sw i{ position:absolute; top:3px; left:3px; width:24px; height:24px; border-radius:50%; background:#8a8a91; transition:transform .28s cubic-bezier(.22,1,.36,1), background .25s; }
+.ss-sw[aria-checked="true"]{ background:linear-gradient(180deg,#c42d1e,#a82418); border-color:#e0392a; box-shadow:0 0 16px rgba(192,40,27,.45); }
+.ss-sw[aria-checked="true"] i{ transform:translateX(22px); background:#fff; }
+.ss-sw:focus-visible{ outline:2px solid #ff7a66; outline-offset:2px; }
+.ss-stats{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+.ss-stat{ display:flex; align-items:center; gap:11px; min-width:0; padding:13px 12px; border-radius:18px; background:#000; border:1px solid #1f1f1f; box-shadow:inset 0 0 28px rgba(192,40,27,.10); transition:border-color .25s, box-shadow .25s; }
+.ss-stats.edit .ss-stat{ border-color:#5a1912; box-shadow:inset 0 0 28px rgba(192,40,27,.18), 0 0 0 1px rgba(192,40,27,.12); }
+.ss-stat-ico{ flex:0 0 40px; width:40px; height:40px; border-radius:13px; display:grid; place-items:center; color:#ff5a46; background:linear-gradient(145deg,#3a0f0b,#1a0605); border:1px solid #3a120d; }
+.ss-stat-ico svg{ width:21px; height:21px; }
+.ss-stat-tx{ min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ss-stat-lb{ font-size:12px; color:#9a9aa1; }
+.ss-stat-val{ display:flex; align-items:baseline; gap:5px; min-width:0; }
+.ss-stat-in{ width:100%; min-width:0; padding:0; margin:0; border:0; background:transparent; color:#ff4a3a; font:700 21px/1.15 'Rajdhani','Noto Sans Lao',sans-serif; outline:none; }
+.ss-stats.edit .ss-stat-in{ border-bottom:1px dashed #6b1d15; color:#fff; }
+.ss-stats.edit .ss-stat-in:focus{ border-bottom-color:#ff7a66; }
+.ss-stat-val em{ font-style:normal; font-size:11px; color:#9a9aa1; white-space:nowrap; }
