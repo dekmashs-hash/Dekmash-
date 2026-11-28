@@ -4115,24 +4115,30 @@ async function handleSiteSettings(request, env) {
     }
   }
   try {
+    const base = env.SUPABASE_URL.replace(/\/$/, '');
+    const putImg = async (dataUrl, path, maxBytes) => {
+      const m = /^data:image\/(png|webp|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
+      if (!m) return { error: 'ไฟล์รูปไม่ถูกต้อง', status: 400 };
+      const bin = atob(m[2]);
+      if (bin.length > maxBytes) return { error: 'ไฟล์รูปใหญ่เกินไป', status: 413 };
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      const up = await fetch(`${base}/storage/v1/object/site-assets/${path}`, {
+        method: 'POST',
+        headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': `image/${m[1]}`, 'x-upsert': 'true' },
+        body: bytes,
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!up.ok) { console.error('site image upload failed', up.status, await up.text()); return { error: 'อัปโหลดรูปไม่สำเร็จ', status: 502 }; }
+      return { url: `${base}/storage/v1/object/public/site-assets/${path}` };
+    };
+    // แบนเนอร์หน้าแรก: รับ data URL (ย่อมาจากหน้าเว็บแล้ว) -> bucket site-assets/hero/ -> เก็บ URL ใน hero_image
+    if (body && body.banner_data) {
+      const b = await putImg(body.banner_data, `hero/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${/^data:image\/png/.test(String(body.banner_data)) ? 'png' : /^data:image\/webp/.test(String(body.banner_data)) ? 'webp' : 'jpg'}`, 3 * 1024 * 1024);
+      if (b.error) return json({ error: b.error }, b.status);
+      patch.hero_image = b.url;
+    }
     // โลโก้ร้าน: รับ data URL (PNG/WEBP/JPEG ที่ย่อ+ปรับขนาดมาจากหน้าเว็บแล้ว) -> อัปโหลดเข้า bucket site-assets -> เก็บ URL ใน logo_url
     if (body && body.logo_data) {
-      const base = env.SUPABASE_URL.replace(/\/$/, '');
-      const putImg = async (dataUrl, path, maxBytes) => {
-        const m = /^data:image\/(png|webp|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
-        if (!m) return { error: 'ไฟล์โลโก้ไม่ถูกต้อง', status: 400 };
-        const bin = atob(m[2]);
-        if (bin.length > maxBytes) return { error: 'ไฟล์โลโก้ใหญ่เกินไป', status: 413 };
-        const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-        const up = await fetch(`${base}/storage/v1/object/site-assets/${path}`, {
-          method: 'POST',
-          headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': `image/${m[1]}`, 'x-upsert': 'true' },
-          body: bytes,
-          signal: AbortSignal.timeout(15000),
-        });
-        if (!up.ok) { console.error('logo upload failed', up.status, await up.text()); return { error: 'อัปโหลดโลโก้ไม่สำเร็จ', status: 502 }; }
-        return { url: `${base}/storage/v1/object/public/site-assets/${path}` };
-      };
       // ต้นฉบับ (ไม่ย่อ) เก็บไว้ที่ logo/original.png เพื่อให้กลับมาปรับขนาดภายหลังได้โดยภาพไม่เล็กลงสะสม
       if (body.logo_orig) {
         const o = await putImg(body.logo_orig, 'logo/original.png', 2 * 1024 * 1024);
@@ -4229,7 +4235,7 @@ async function handleShopStats(request, env) {
     const lite = new URL(request.url).searchParams.get('lite') === '1';
     const [st, set] = await Promise.all([
       lite ? Promise.resolve({ ok: true, data: null }) : sbRaw(env, 'POST', 'rpc/admin_shop_stats', {}),
-      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url,discord_card_style&limit=1'),
+      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url,discord_card_style,hero_image&limit=1'),
     ]);
     if (!st.ok) { console.error('admin_shop_stats failed', st.status, st.text); return json({ error: 'ດຶງສະຖິຕິບໍ່ສຳເລັດ' }, 502); }
     const s0 = set.ok && Array.isArray(set.data) && set.data[0] ? set.data[0] : {};
@@ -4238,7 +4244,7 @@ async function handleShopStats(request, env) {
     return json({
       ok: true,
       stats: st.data,
-      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null, discord_style: ['a', 'b'].includes(s0.discord_card_style) ? s0.discord_card_style : 'classic' },
+      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null, banner: s0.hero_image || null, discord_style: ['a', 'b'].includes(s0.discord_card_style) ? s0.discord_card_style : 'classic' },
       rental: { expires_at: Number.isFinite(exp) ? new Date(exp).toISOString() : null, renew_url: renew },
       admin: { name: String(admin.username || admin.email || 'A') },
     });
