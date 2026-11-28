@@ -180,10 +180,20 @@
   <section class="ss-card" id="ssPanel-basic5" role="tabpanel">
     <div class="ss-card-body ss-ann-body">
       <div class="ss-field">
-        <label for="ssAnnText">ข้อความประกาศ (แถบวิ่งหน้าแรก)</label>
-        <textarea id="ssAnnText" rows="2" maxlength="300" spellcheck="false" placeholder="พิมพ์ข้อความประกาศ — เว้นว่าง = ซ่อนแถบประกาศ"></textarea>
-        <div class="ss-range-top"><span>ความเร็วข้อความ <small class="ss-ann-hint">(ช้า ← → เร็ว)</small></span><b id="ssAnnSpd">45</b></div>
-        <div class="ss-range-wrap" id="ssAnnWrap"><i class="ss-pika" id="ssAnnPika" aria-hidden="true"></i><input id="ssAnnRange" class="ss-range" type="range" min="10" max="120" step="1" value="45" aria-label="ปรับความเร็วข้อความประกาศ"/></div>
+        <div class="ss-sw-row">
+          <div class="ss-sw-tx"><label id="ssAnnLbl" for="ssAnnSw">แสดงแถบประกาศหน้าแรก</label><small id="ssAnnHint">เปิด = แสดงแถบข้อความวิ่งบนหน้าแรก</small></div>
+          <button class="ss-sw" id="ssAnnSw" type="button" role="switch" aria-checked="true" aria-labelledby="ssAnnLbl"><i></i></button>
+        </div>
+        <div class="ss-ann-form" id="ssAnnForm">
+          <label for="ssAnnText" class="ss-ann-lb">ข้อความประกาศ</label>
+          <textarea id="ssAnnText" rows="2" maxlength="300" spellcheck="false" placeholder="พิมพ์ข้อความประกาศ"></textarea>
+          <div class="ss-range-top"><span>ความเร็วข้อความ <small class="ss-ann-hint">(ช้า ← → เร็ว)</small></span><b id="ssAnnSpd">45</b></div>
+          <div class="ss-range-wrap" id="ssAnnWrap"><i class="ss-pika" id="ssAnnPika" aria-hidden="true"></i><input id="ssAnnRange" class="ss-range" type="range" min="10" max="120" step="1" value="45" aria-label="ปรับความเร็วข้อความประกาศ"/></div>
+          <div class="ss-prev ss-ann-prev" aria-label="ตัวอย่างแถบประกาศ">
+            <div class="hc-ann" id="ssAnnBar"><div class="hc-ann-lab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.600 16.800a3 3 0 1 1-5.800-1.600"/></svg><span>ປະກາດ</span></div><div class="hc-ann-win"><div class="hc-ann-track" id="ssAnnTrack"></div></div></div>
+            <span class="ss-prev-cap" id="ssAnnCap">ภาพจำลองบนหน้าแรก</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>

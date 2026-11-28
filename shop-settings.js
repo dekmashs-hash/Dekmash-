@@ -4,7 +4,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var TH_M = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var stDoneRes = function () {};
-  var bannerData = null, annLoaded = false, annLast = 45;
+  var bannerData = null, annLoaded = false, annLast = 45, annOn = true;
   var rental = { expires_at: null, renew_url: null };
   var shopName = '';
   var logoSrc = null, logoImg = null, logoDirty = false, logoSaved = '';
@@ -68,7 +68,7 @@
         if (!dcLoaded) { dcStyle = (j.shop && j.shop.discord_style) || 'classic'; dcLoaded = true; renderDc(); }
         if (!bannerData) { var bn = j.shop && j.shop.banner; var bp = $('ssPreview'); if (bn && /^(https:|\/)/.test(bn)) { bp.src = bn; bp.hidden = false; $('ssDrop').classList.add('has'); } }
         if (!annLoaded) {
-          annLoaded = true; $('ssAnnText').value = (j.shop && j.shop.announcement) || '';
+          annLoaded = true; annOn = !(j.shop && j.shop.announcement_enabled === false); $('ssAnnText').value = (j.shop && j.shop.announcement) || '';
           var sp = Math.min(120, Math.max(10, +(j.shop && j.shop.announcement_speed) || 45)); $('ssAnnRange').value = sp; renderAnn();
         }
         rental = j.rental || rental;
@@ -119,7 +119,7 @@
         tabs.forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); });
         ['basic', 'font', 'notice', 'more'].forEach(function (k) { $('ssPanel-' + k).hidden = k !== t.getAttribute('data-tab'); });
         $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = $('ssPanel-basic4').hidden = $('ssPanel-basic5').hidden = t.getAttribute('data-tab') !== 'basic';
-        setTimeout(function () { placePika(); placeAnnPika(); }, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+        setTimeout(function () { placePika(); placeAnnPika(); annPrevKey = ''; buildAnnPrev(); }, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       });
     });
   }
@@ -303,7 +303,27 @@
     var ratio = (r.value - r.min) / (r.max - r.min), W = w.clientWidth || w.getBoundingClientRect().width || 200;
     pk.style.left = Math.max(0, ratio * (W - 44)) + 'px';
   }
-  function renderAnn() { $('ssAnnSpd').textContent = $('ssAnnRange').value; placeAnnPika(); }
+  var annPrevKey = '';
+  function buildAnnPrev() {
+    var win = $('ssAnnBar').querySelector('.hc-ann-win'), track = $('ssAnnTrack');
+    var text = $('ssAnnText').value.replace(/\s+/g, ' ').trim(), sp = +$('ssAnnRange').value;
+    $('ssAnnCap').textContent = !annOn ? 'ปิดอยู่ — หน้าแรกจะไม่แสดงแถบประกาศ' : (text ? 'ภาพจำลองบนหน้าแรก' : 'ยังไม่มีข้อความ — หน้าแรกจะไม่แสดงแถบประกาศ');
+    var shown = text || 'ข้อความประกาศของคุณ';
+    var key = shown + '|' + sp + '|' + win.clientWidth; if (key === annPrevKey) return; annPrevKey = key;
+    var grp = function (n) { return '<div class="hc-ann-grp">' + '<span></span>'.repeat(n) + '</div>'; };
+    var fill = function () { track.querySelectorAll('span').forEach(function (e) { e.textContent = shown; }); };
+    track.innerHTML = grp(1); fill();
+    var w = track.querySelector('span').getBoundingClientRect().width || 1, k = Math.max(1, Math.ceil((win.clientWidth || 1) / w));
+    track.innerHTML = grp(k) + grp(k); fill();
+    track.style.setProperty('--hc-dur', Math.max(8, (w * k) / sp).toFixed(1) + 's');
+  }
+  function renderAnn() {
+    $('ssAnnSpd').textContent = $('ssAnnRange').value; placeAnnPika();
+    var sw = $('ssAnnSw'); sw.setAttribute('aria-checked', String(annOn));
+    $('ssAnnForm').classList.toggle('off', !annOn);
+    $('ssAnnHint').textContent = annOn ? 'เปิด = แสดงแถบข้อความวิ่งบนหน้าแรก' : 'ปิด = ซ่อนแถบประกาศ (ข้อความที่พิมพ์ไว้ไม่หาย)';
+    buildAnnPrev();
+  }
   function initAnn() {
     var r = $('ssAnnRange'), pk = $('ssAnnPika');
     pk.classList.add('idle');
@@ -313,7 +333,9 @@
       annPikaT = setTimeout(function () { pk.classList.remove('run'); pk.classList.add('idle'); }, 220);
       renderAnn();
     });
-    placeAnnPika(); window.addEventListener('resize', placeAnnPika);
+    $('ssAnnSw').addEventListener('click', function () { annOn = !annOn; renderAnn(); });
+    $('ssAnnText').addEventListener('input', renderAnn);
+    placeAnnPika(); renderAnn(); window.addEventListener('resize', function () { placeAnnPika(); annPrevKey = ''; buildAnnPrev(); });
   }
 
   /* ---------- ฟอร์ม ---------- */
@@ -350,7 +372,7 @@
       if (dcLoaded) payload.discord_style = dcStyle;
       if (stState.loaded) { payload.stats_fake_enabled = stState.enabled; payload.stats_fake = stState.fake; }
       if (bannerData) payload.banner_data = bannerData;
-      if (annLoaded) { payload.announcement_text = $('ssAnnText').value; payload.announcement_speed = +$('ssAnnRange').value; }
+      if (annLoaded) { payload.announcement_text = $('ssAnnText').value; payload.announcement_enabled = annOn; payload.announcement_speed = +$('ssAnnRange').value; }
       if (logoImg && logoDirty) {
         payload.logo_data = drawLogo(+$('ssLogoRange').value); payload.logo_scale = +$('ssLogoRange').value;
         if (origDirty) payload.logo_orig = origData(logoImg);

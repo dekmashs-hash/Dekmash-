@@ -165,3 +165,8 @@ body.ss{ font-family:'Noto Sans Thai Looped','Noto Sans Lao',system-ui,sans-seri
 }
 #ssAnnText:focus{ outline:none; border-color:#8f241b; box-shadow:0 0 0 3px rgba(192,40,27,.18); }
 .ss-ann-hint{ color:#7d7d85; font-size:12px; }
+.ss-ann-form{ margin-top:18px; transition:opacity .25s; }
+.ss-ann-form.off #ssAnnText, .ss-ann-form.off .ss-range-wrap, .ss-ann-form.off .ss-range-top{ opacity:.4; pointer-events:none; }
+.ss-ann-form.off .ss-ann-prev .hc-ann{ opacity:.35; }
+.ss-ann-lb{ display:block; margin-bottom:10px; font-size:14.5px; color:#d6d6da; }
+.ss-ann-prev .hc-ann{ margin:0; }
