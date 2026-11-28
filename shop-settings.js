@@ -4,6 +4,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var TH_M = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var stDoneRes = function () {};
+  var bannerData = null;
   var rental = { expires_at: null, renew_url: null };
   var shopName = '';
   var logoSrc = null, logoImg = null, logoDirty = false, logoSaved = '';
@@ -65,6 +66,7 @@
         if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; refreshLogo(); var sv = logoSaved; stDone.then(function () { if (logoSaved === sv && !logoDirty) preloadSaved(sv); }); }
         setTxt('spAvatar', String((j.admin && j.admin.name) || 'A').charAt(0).toUpperCase());
         if (!dcLoaded) { dcStyle = (j.shop && j.shop.discord_style) || 'classic'; dcLoaded = true; renderDc(); }
+        if (!bannerData) { var bn = j.shop && j.shop.banner; var bp = $('ssPreview'); if (bn && /^(https:|\/)/.test(bn)) { bp.src = bn; bp.hidden = false; $('ssDrop').classList.add('has'); } }
         rental = j.rental || rental;
         renderRental();
       })
@@ -299,7 +301,22 @@
       var f = this.files && this.files[0];
       if (!f) return;
       if (!/^image\//.test(f.type)) { toast('กรุณาเลือกไฟล์รูปภาพ'); return; }
-      var img = $('ssPreview'); img.src = URL.createObjectURL(f); img.hidden = false; $('ssDrop').classList.add('has');
+      var u = URL.createObjectURL(f), im = new Image();
+      im.onload = function () {
+        try {
+          var r = Math.min(1, 1280 / im.naturalWidth), c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(im.naturalWidth * r)); c.height = Math.max(1, Math.round(im.naturalHeight * r));
+          var g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
+          var d = c.toDataURL('image/jpeg', 0.85);
+          if (d.length > 3.5 * 1024 * 1024) d = c.toDataURL('image/jpeg', 0.6);
+          bannerData = d;
+          var pv = $('ssPreview'); pv.src = d; pv.hidden = false; $('ssDrop').classList.add('has');
+          toast('เลือกรูปแล้ว — กด "บันทึกการตั้งค่า" เพื่อใช้งาน');
+        } catch (e) { toast('ประมวลผลรูปไม่สำเร็จ'); }
+        URL.revokeObjectURL(u);
+      };
+      im.onerror = function () { toast('เปิดไฟล์รูปไม่ได้ (ลองรูป JPG/PNG)'); };
+      im.src = u;
     });
     $('ssSave').addEventListener('click', function () {
       var btn = this, name = $('ssName').value.trim();
@@ -308,6 +325,7 @@
       var payload = { store_name: name };
       if (dcLoaded) payload.discord_style = dcStyle;
       if (stState.loaded) { payload.stats_fake_enabled = stState.enabled; payload.stats_fake = stState.fake; }
+      if (bannerData) payload.banner_data = bannerData;
       if (logoImg && logoDirty) {
         payload.logo_data = drawLogo(+$('ssLogoRange').value); payload.logo_scale = +$('ssLogoRange').value;
         if (origDirty) payload.logo_orig = origData(logoImg);
@@ -318,6 +336,7 @@
           if (!x.ok || !x.j || !x.j.ok) throw new Error((x.j && x.j.error) || 'บันทึกไม่สำเร็จ');
           if (x.j.logo_url) { var keep = +$('ssLogoRange').value; logoSaved = x.j.logo_url; origDirty = false; if (logoImg) baseImg = logoImg; logoImg = null; logoDirty = false; $('ssLogoRange').value = keep; refreshLogo();
             var lb = $('spLogo'); lb.textContent = ''; lb.classList.add('has-img'); var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
+          bannerData = null;
           shopName = name; setTxt('spName', name); delete $('ssName').dataset.dirty; renderRental();
           toast('บันทึกการตั้งค่าแล้ว');
         })
