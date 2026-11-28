@@ -132,12 +132,27 @@
     clearTimeout(pikaT);
     pikaT = setTimeout(function () { pk.classList.remove('run'); pk.classList.add('idle'); }, 220);
   }
-  var baseImg = null;
+  var baseImg = null, origDirty = false;
+  function loadBlobImg(url, ok, bad) {
+    fetch(url, { mode: 'cors', cache: 'no-store' }).then(function (r) { if (!r.ok) throw 0; return r.blob(); }).then(function (bl) {
+      var im = new Image(); im.onload = function () { ok(im); }; im.onerror = bad; im.src = URL.createObjectURL(bl);
+    }).catch(bad);
+  }
   function preloadSaved(url) {
     baseImg = null; if (!url) return;
-    fetch(url, { mode: 'cors', cache: 'force-cache' }).then(function (r) { if (!r.ok) throw 0; return r.blob(); }).then(function (bl) {
-      var im = new Image(); im.onload = function () { if (logoSaved === url) baseImg = im; }; im.src = URL.createObjectURL(bl);
-    }).catch(function () {});
+    var m = /_s(\d{2,3})\.\w+$/.exec(url), sc = m ? Math.min(100, Math.max(30, +m[1])) : 100;
+    var orig = url.replace(/\/logo\/[^/]+$/, '/logo/original.png');
+    loadBlobImg(orig + '?t=' + Date.now(), function (im) {
+      if (logoSaved !== url) return;
+      baseImg = im; if (!logoDirty) { $('ssLogoRange').value = sc; placePika(); $('ssLogoPct').textContent = sc + '%'; }
+    }, function () {   // โลโก้เก่าที่ไม่มีต้นฉบับ -> ใช้ภาพที่บันทึกไว้เป็นฐาน 100%
+      loadBlobImg(url, function (im) { if (logoSaved === url) baseImg = im; }, function () {});
+    });
+  }
+  function origData(im) {
+    var r = Math.min(1, 512 / Math.max(im.naturalWidth, im.naturalHeight)), c = document.createElement('canvas');
+    c.width = Math.round(im.naturalWidth * r); c.height = Math.round(im.naturalHeight * r);
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); return c.toDataURL('image/png');
   }
   function drawLogo(pct) {
     var c = document.createElement('canvas'); c.width = c.height = 256;
@@ -169,7 +184,7 @@
       if (!f) return;
       if (!/^image\//.test(f.type)) { toast('กรุณาเลือกไฟล์รูปภาพ'); return; }
       var u = URL.createObjectURL(f), im = new Image();
-      im.onload = function () { logoImg = im; logoDirty = true; $('ssLogoRange').disabled = false; $('ssLogoRange').value = 100; refreshLogo(); };
+      im.onload = function () { logoImg = im; logoDirty = true; origDirty = true; $('ssLogoRange').disabled = false; $('ssLogoRange').value = 100; refreshLogo(); };
       im.onerror = function () { toast('เปิดไฟล์รูปไม่ได้'); };
       im.src = u;
     });
@@ -191,12 +206,15 @@
       if (!name) { toast('กรุณากรอกชื่อเว็บไซต์'); $('ssName').focus(); return; }
       btn.disabled = true;
       var payload = { store_name: name };
-      if (logoImg && logoDirty) payload.logo_data = drawLogo(+$('ssLogoRange').value);
+      if (logoImg && logoDirty) {
+        payload.logo_data = drawLogo(+$('ssLogoRange').value); payload.logo_scale = +$('ssLogoRange').value;
+        if (origDirty) payload.logo_orig = origData(logoImg);
+      }
       fetch('/api/admin/site-settings', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (x) {
           if (!x.ok || !x.j || !x.j.ok) throw new Error((x.j && x.j.error) || 'บันทึกไม่สำเร็จ');
-          if (x.j.logo_url) { logoSaved = x.j.logo_url; preloadSaved(logoSaved); logoImg = null; logoDirty = false; $('ssLogoRange').value = 100; refreshLogo();
+          if (x.j.logo_url) { var keep = +$('ssLogoRange').value; logoSaved = x.j.logo_url; origDirty = false; if (logoImg) baseImg = logoImg; logoImg = null; logoDirty = false; $('ssLogoRange').value = keep; refreshLogo();
             var lb = $('spLogo'); lb.textContent = ''; var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
           shopName = name; setTxt('spName', name); delete $('ssName').dataset.dirty; renderRental();
           toast('บันทึกการตั้งค่าแล้ว');

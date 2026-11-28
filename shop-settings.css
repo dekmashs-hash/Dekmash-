@@ -114,3 +114,7 @@ body.ss{ font-family:'Noto Sans Thai Looped','Noto Sans Lao',system-ui,sans-seri
 .ss-prev-logo i{ font-style:normal; font-weight:700; color:#d3392a; }
 .ss-prev-name{ font-size:15px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ss-prev-cap{ display:block; margin-top:8px; font-size:11.5px; color:#6f6f76; }
+
+/* โลโก้ที่หัวหน้า: ถ้ามีรูปโลโก้ ไม่ต้องมีวงกลมแดงรองพื้น */
+.ss .sp-logo:has(img){ background:none; box-shadow:none; border-radius:0; overflow:visible; }
+.ss .sp-logo img{ object-fit:contain; }
