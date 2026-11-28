@@ -2123,7 +2123,7 @@ async function handlePublicStorefront(request, env, opts) {
       (opts && opts.raw) ? Promise.resolve(new Map()) : getSoldCountsByProductName(env),
       (opts && opts.raw) ? Promise.resolve({ list: [], byProduct: new Map() }) : getActivePromotions(env),
       // ความเร็วแถบประกาศ (คอลัมน์ announcement_speed) — แยกดึงแบบไม่ throw: ถ้ายังไม่ได้เพิ่มคอลัมน์ใน Supabase หน้าร้านต้องไม่พัง
-      (opts && opts.raw) ? Promise.resolve(null) : sbRaw(env, 'GET', 'site_settings?id=eq.1&select=announcement_speed,announcement_enabled&limit=1').catch(() => null),
+      (opts && opts.raw) ? Promise.resolve(null) : sbRaw(env, 'GET', 'site_settings?id=eq.1&select=announcement_speed,announcement_enabled,discord_card_bottom&limit=1').catch(() => null),
     ]);
 
     const settings = settingsRows[0] || {};
@@ -2226,6 +2226,8 @@ async function handlePublicStorefront(request, env, opts) {
         heroImage: settings.hero_image || null,
         logoUrl: settings.logo_url || null,
         discordStyle: ['a', 'b'].includes(settings.discord_card_style) ? settings.discord_card_style : 'classic',
+        // สวิตช์ "ย้ายการ์ด Discord ไปท้ายเว็บ" (คอลัมน์ discord_card_bottom — ดึงแบบไม่ throw)
+        discordBottom: !!(speedRes && speedRes.ok && Array.isArray(speedRes.data) && speedRes.data[0] && speedRes.data[0].discord_card_bottom === true),
         qrLabel1: settings.qr_label || null,
         qrLabel2: settings.qr_label_2 || null,
         qrUrl1: settings.qr_url || null,
@@ -4113,6 +4115,7 @@ async function handleSiteSettings(request, env) {
     if (t.length > 300) return json({ error: 'ข้อความประกาศยาวเกิน 300 ตัวอักษร' }, 400);
     patch.announcement_text = t || null;
   }
+  if (body && body.discord_bottom !== undefined) patch.discord_card_bottom = body.discord_bottom === true;
   if (body && body.announcement_enabled !== undefined) patch.announcement_enabled = body.announcement_enabled === true;
   if (body && body.announcement_speed !== undefined) {
     const sp = Math.round(Number(body.announcement_speed));
@@ -4170,8 +4173,8 @@ async function handleSiteSettings(request, env) {
     let r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', patch, { Prefer: 'return=minimal' });
     // ยังไม่ได้เพิ่มคอลัมน์ announcement_speed ใน Supabase -> บันทึกส่วนอื่นต่อให้ แล้วแจ้งกลับไปให้หน้าเว็บบอกผู้ใช้
     let speedMissing = false;
-    if (!r.ok && (patch.announcement_speed !== undefined || patch.announcement_enabled !== undefined) && /announcement_(speed|enabled)/.test(String(r.text || ''))) {
-      delete patch.announcement_speed; delete patch.announcement_enabled; speedMissing = true;
+    if (!r.ok && (patch.announcement_speed !== undefined || patch.announcement_enabled !== undefined || patch.discord_card_bottom !== undefined) && /announcement_(speed|enabled)|discord_card_bottom/.test(String(r.text || ''))) {
+      delete patch.announcement_speed; delete patch.announcement_enabled; delete patch.discord_card_bottom; speedMissing = true;
       r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', patch, { Prefer: 'return=minimal' });
     }
     if (!r.ok) { console.error('site-settings patch failed', r.status, r.text); return json({ error: 'บันทึกไม่สำเร็จ' }, 502); }
@@ -4257,7 +4260,7 @@ async function handleShopStats(request, env) {
     const [st, set, spd] = await Promise.all([
       lite ? Promise.resolve({ ok: true, data: null }) : sbRaw(env, 'POST', 'rpc/admin_shop_stats', {}),
       sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url,discord_card_style,hero_image,announcement_text&limit=1'),
-      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=announcement_speed,announcement_enabled&limit=1').catch(() => null),
+      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=announcement_speed,announcement_enabled,discord_card_bottom&limit=1').catch(() => null),
     ]);
     if (!st.ok) { console.error('admin_shop_stats failed', st.status, st.text); return json({ error: 'ດຶງສະຖິຕິບໍ່ສຳເລັດ' }, 502); }
     const s0 = set.ok && Array.isArray(set.data) && set.data[0] ? set.data[0] : {};
@@ -4266,7 +4269,7 @@ async function handleShopStats(request, env) {
     return json({
       ok: true,
       stats: st.data,
-      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null, banner: s0.hero_image || null, announcement: s0.announcement_text || '', announcement_enabled: !(spd && spd.ok && Array.isArray(spd.data) && spd.data[0] && spd.data[0].announcement_enabled === false), announcement_speed: (spd && spd.ok && Array.isArray(spd.data) && spd.data[0] && Number(spd.data[0].announcement_speed)) || null, discord_style: ['a', 'b'].includes(s0.discord_card_style) ? s0.discord_card_style : 'classic' },
+      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null, banner: s0.hero_image || null, announcement: s0.announcement_text || '', discord_bottom: !!(spd && spd.ok && Array.isArray(spd.data) && spd.data[0] && spd.data[0].discord_card_bottom === true), announcement_enabled: !(spd && spd.ok && Array.isArray(spd.data) && spd.data[0] && spd.data[0].announcement_enabled === false), announcement_speed: (spd && spd.ok && Array.isArray(spd.data) && spd.data[0] && Number(spd.data[0].announcement_speed)) || null, discord_style: ['a', 'b'].includes(s0.discord_card_style) ? s0.discord_card_style : 'classic' },
       rental: { expires_at: Number.isFinite(exp) ? new Date(exp).toISOString() : null, renew_url: renew },
       admin: { name: String(admin.username || admin.email || 'A') },
     });
