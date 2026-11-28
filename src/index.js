@@ -125,6 +125,9 @@ async function route(request, env, ctx) {
       return handleSiteSettings(request, env);
     }
     // ส่งรูปโลโก้ (ต้นฉบับ/ปัจจุบัน) ให้หน้าตั้งค่าผ่านโดเมนเดียวกัน — กัน CORS ทำให้ปรับขนาดไม่ได้
+    if (url.pathname === '/api/admin/home-stats') {
+      return handleHomeStats(request, env);
+    }
     if (url.pathname === '/api/admin/site-logo') {
       return handleSiteLogo(request, env, url);
     }
@@ -2068,7 +2071,7 @@ async function getActivePromotions(env) {
    ตัวเลขคงเหลือเท่านั้น ไม่ใช่รหัสสินค้าจริง) แล้วคืนเป็น JSON ก้อนเดียวให้ทั้ง index.html
    และ category.html ใช้งาน (category.html กรองด้วย ?cat=1..4 เอาเองฝั่ง client จาก
    products[].category ที่ตรงกับ categories[].name) */
-async function handlePublicStorefront(request, env) {
+async function handlePublicStorefront(request, env, opts) {
   if (request.method !== 'GET') {
     return json({ error: 'Method not allowed' }, 405);
   }
@@ -2084,6 +2087,7 @@ async function handlePublicStorefront(request, env) {
   try {
     const siteSettingsColumns = [
       'store_name', 'tagline', 'announcement_text', 'hero_image', 'logo_url', 'discord_card_style',
+      'stats_fake_enabled', 'stats_fake_users', 'stats_fake_products', 'stats_fake_stock', 'stats_fake_sold',
       'qr_label', 'qr_label_2', 'qr_url', 'qr_url_2',
       'qr_label_3', 'qr_url_3', 'qr_label_4', 'qr_url_4',
       ...[1, 2, 3, 4].flatMap((n) => [`qr_sub_${n}`, `qr_badge_${n}`, `qr_icon_${n}`, `qr_auto_${n}`]),
@@ -2243,7 +2247,13 @@ async function handlePublicStorefront(request, env) {
       },
       categories,
       promotions: promoData.list,
-      stats: {
+      // สวิตช์ "ตัวเลขจำลอง" (ตั้งค่าเว็บไซต์): เปิด = ใช้เลขที่แอดมินตั้ง / ปิด = ตัวเลขจริง (opts.raw = หน้าแอดมินขอเลขจริงเสมอ)
+      stats: (settings.stats_fake_enabled === true && !(opts && opts.raw)) ? {
+        productCount: Number(settings.stats_fake_products) || 0,
+        totalStock: Number(settings.stats_fake_stock) || 0,
+        userCount: Number(settings.stats_fake_users) || 0,
+        totalSold: Number(settings.stats_fake_sold) || 0,
+      } : {
         productCount: visibleProductsWithStock.length,
         totalStock,
         userCount,
@@ -4093,6 +4103,16 @@ async function handleSiteSettings(request, env) {
     if (!['classic', 'a', 'b'].includes(ds)) return json({ error: 'รูปแบบการ์ด Discord ไม่ถูกต้อง' }, 400);
     patch.discord_card_style = ds;
   }
+  if (body && body.stats_fake_enabled !== undefined) patch.stats_fake_enabled = body.stats_fake_enabled === true;
+  if (body && body.stats_fake && typeof body.stats_fake === 'object') {
+    const map = { users: 'stats_fake_users', products: 'stats_fake_products', stock: 'stats_fake_stock', sold: 'stats_fake_sold' };
+    for (const k of Object.keys(map)) {
+      if (body.stats_fake[k] === undefined) continue;
+      const n = Math.floor(Number(body.stats_fake[k]));
+      if (!Number.isFinite(n) || n < 0 || n > 999999999) return json({ error: 'ตัวเลขสถิติต้องอยู่ระหว่าง 0–999,999,999' }, 400);
+      patch[map[k]] = n;
+    }
+  }
   try {
     // โลโก้ร้าน: รับ data URL (PNG/WEBP/JPEG ที่ย่อ+ปรับขนาดมาจากหน้าเว็บแล้ว) -> อัปโหลดเข้า bucket site-assets -> เก็บ URL ใน logo_url
     if (body && body.logo_data) {
@@ -4130,6 +4150,32 @@ async function handleSiteSettings(request, env) {
     return json({ ok: true, store_name: patch.store_name, logo_url: patch.logo_url || null, discord_style: patch.discord_card_style || null });
   } catch (err) {
     console.error('handleSiteSettings failed:', err);
+    return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
+  }
+}
+
+/* ---------- GET /api/admin/home-stats ----------
+   หน้า "ตั้งค่าเว็บไซต์": ตัวเลขจริงของ 4 การ์ดสถิติ + ค่าจำลองที่ตั้งไว้ + สถานะสวิตช์ (เฉพาะแอดมิน, ไม่ผ่าน cache) */
+async function handleHomeStats(request, env) {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const admin = await getSessionUser(request, env);
+  if (!admin || !admin.isAdmin) return json({ error: 'ไม่มีสิทธิ์เข้าถึง' }, 403);
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: 'Worker ยังไม่ได้ตั้งค่า SUPABASE' }, 500);
+  try {
+    const [pub, set] = await Promise.all([
+      handlePublicStorefront(request, env, { raw: true }).then((r) => r.json()),
+      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=stats_fake_enabled,stats_fake_users,stats_fake_products,stats_fake_stock,stats_fake_sold&limit=1'),
+    ]);
+    if (!pub || !pub.stats) return json({ error: 'ดึงสถิติไม่สำเร็จ' }, 502);
+    const f = set.ok && Array.isArray(set.data) && set.data[0] ? set.data[0] : {};
+    return json({
+      ok: true,
+      enabled: f.stats_fake_enabled === true,
+      real: { users: pub.stats.userCount || 0, products: pub.stats.productCount || 0, stock: pub.stats.totalStock || 0, sold: pub.stats.totalSold || 0 },
+      fake: { users: Number(f.stats_fake_users) || 0, products: Number(f.stats_fake_products) || 0, stock: Number(f.stats_fake_stock) || 0, sold: Number(f.stats_fake_sold) || 0 },
+    });
+  } catch (err) {
+    console.error('handleHomeStats failed:', err);
     return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
   }
 }
