@@ -4,7 +4,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var TH_M = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var stDoneRes = function () {};
-  var bannerData = null;
+  var bannerData = null, annLoaded = false, annLast = 45;
   var rental = { expires_at: null, renew_url: null };
   var shopName = '';
   var logoSrc = null, logoImg = null, logoDirty = false, logoSaved = '';
@@ -67,6 +67,10 @@
         setTxt('spAvatar', String((j.admin && j.admin.name) || 'A').charAt(0).toUpperCase());
         if (!dcLoaded) { dcStyle = (j.shop && j.shop.discord_style) || 'classic'; dcLoaded = true; renderDc(); }
         if (!bannerData) { var bn = j.shop && j.shop.banner; var bp = $('ssPreview'); if (bn && /^(https:|\/)/.test(bn)) { bp.src = bn; bp.hidden = false; $('ssDrop').classList.add('has'); } }
+        if (!annLoaded) {
+          annLoaded = true; $('ssAnnText').value = (j.shop && j.shop.announcement) || '';
+          var sp = Math.min(120, Math.max(10, +(j.shop && j.shop.announcement_speed) || 45)); $('ssAnnRange').value = sp; renderAnn();
+        }
         rental = j.rental || rental;
         renderRental();
       })
@@ -114,8 +118,8 @@
       t.addEventListener('click', function () {
         tabs.forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); });
         ['basic', 'font', 'notice', 'more'].forEach(function (k) { $('ssPanel-' + k).hidden = k !== t.getAttribute('data-tab'); });
-        $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = $('ssPanel-basic4').hidden = t.getAttribute('data-tab') !== 'basic';
-        setTimeout(placePika, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+        $('ssPanel-basic2').hidden = $('ssPanel-basic3').hidden = $('ssPanel-basic4').hidden = $('ssPanel-basic5').hidden = t.getAttribute('data-tab') !== 'basic';
+        setTimeout(function () { placePika(); placeAnnPika(); }, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       });
     });
   }
@@ -292,6 +296,26 @@
     }).catch(function () { setTxt('ssStHint', 'โหลดตัวเลขไม่สำเร็จ — รีเฟรชหน้านี้'); }).then(stDoneRes);
   }
 
+  /* ---------- ข้อความประกาศ + แถบความเร็ว (ปิกาจูเหมือนแถบโลโก้) ---------- */
+  var annPikaT = 0;
+  function placeAnnPika() {
+    var r = $('ssAnnRange'), pk = $('ssAnnPika'), w = $('ssAnnWrap'); if (!r || !pk || !w) return;
+    var ratio = (r.value - r.min) / (r.max - r.min), W = w.clientWidth || w.getBoundingClientRect().width || 200;
+    pk.style.left = Math.max(0, ratio * (W - 44)) + 'px';
+  }
+  function renderAnn() { $('ssAnnSpd').textContent = $('ssAnnRange').value; placeAnnPika(); }
+  function initAnn() {
+    var r = $('ssAnnRange'), pk = $('ssAnnPika');
+    pk.classList.add('idle');
+    r.addEventListener('input', function () {
+      var v = +this.value; if (v !== annLast) pk.classList.toggle('flip', v < annLast); annLast = v;
+      pk.classList.remove('idle'); pk.classList.add('run'); clearTimeout(annPikaT);
+      annPikaT = setTimeout(function () { pk.classList.remove('run'); pk.classList.add('idle'); }, 220);
+      renderAnn();
+    });
+    placeAnnPika(); window.addEventListener('resize', placeAnnPika);
+  }
+
   /* ---------- ฟอร์ม ---------- */
   function initForm() {
     $('ssName').addEventListener('input', function () { this.dataset.dirty = '1'; });
@@ -326,6 +350,7 @@
       if (dcLoaded) payload.discord_style = dcStyle;
       if (stState.loaded) { payload.stats_fake_enabled = stState.enabled; payload.stats_fake = stState.fake; }
       if (bannerData) payload.banner_data = bannerData;
+      if (annLoaded) { payload.announcement_text = $('ssAnnText').value; payload.announcement_speed = +$('ssAnnRange').value; }
       if (logoImg && logoDirty) {
         payload.logo_data = drawLogo(+$('ssLogoRange').value); payload.logo_scale = +$('ssLogoRange').value;
         if (origDirty) payload.logo_orig = origData(logoImg);
@@ -338,7 +363,7 @@
             var lb = $('spLogo'); lb.textContent = ''; lb.classList.add('has-img'); var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
           bannerData = null;
           shopName = name; setTxt('spName', name); delete $('ssName').dataset.dirty; renderRental();
-          toast('บันทึกการตั้งค่าแล้ว');
+          toast(x.j.speed_missing ? 'บันทึกแล้ว แต่ยังเก็บความเร็วไม่ได้ — ต้องเพิ่มคอลัมน์ announcement_speed ใน Supabase ก่อน' : 'บันทึกการตั้งค่าแล้ว');
         })
         .catch(function (e) { toast(e.message || 'บันทึกไม่สำเร็จ'); })
         .then(function () { btn.disabled = false; });
@@ -350,7 +375,7 @@
     });
   }
 
-  initMenu(); initTabs(); initForm(); initLogo(); initDc(); initSt();
+  initMenu(); initTabs(); initForm(); initLogo(); initDc(); initSt(); initAnn();
   // เรียกพร้อมกันเลย (เดิมรอ /api/me ก่อนแล้วค่อยเรียกทีละตัว = ช้า) — 2 endpoint นี้ตรวจสิทธิ์แอดมินที่ฝั่ง Worker เอง และเด้งออกถ้า 401/403
   load(); loadSt();
   setInterval(renderRental, 30000);

@@ -37,6 +37,7 @@
      ------------------------------------------------------------------ */
   const annEl = document.getElementById('homeAnnounce');
   let annText = '';
+  let annSpeed = MARQUEE_SPEED; // px/วินาที — แอดมินปรับได้ในหน้าตั้งค่าเว็บไซต์
 
   function buildMarquee() {
     if (!annEl || !annText) return;
@@ -53,14 +54,17 @@
     const k = Math.max(1, Math.ceil((win.clientWidth || 1) / w));
     track.innerHTML = group(k) + group(k); // 2 ชุด -> translateX(-50%) วนต่อเนื่องพอดี
     fill();
-    track.style.setProperty('--hc-dur', Math.max(8, (w * k) / MARQUEE_SPEED).toFixed(1) + 's');
+    track.style.setProperty('--hc-dur', Math.max(8, (w * k) / annSpeed).toFixed(1) + 's');
   }
 
-  function renderAnnounce(raw) {
+  function renderAnnounce(raw, speed) {
     if (!annEl) return;
+    const sp = Math.min(120, Math.max(10, Number(speed) || MARQUEE_SPEED));
+    const speedChanged = sp !== annSpeed;
+    annSpeed = sp;
     const text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
     if (!text) { annEl.hidden = true; annEl.innerHTML = ''; annText = ''; return; }
-    if (text === annText && !annEl.hidden) return;
+    if (text === annText && !annEl.hidden) { if (speedChanged) buildMarquee(); return; }
     annText = text;
     annEl.className = 'hc-ann';
     annEl.setAttribute('role', 'region');
@@ -155,7 +159,7 @@
         const store = (data && data.store) || {};
         fallbackInvite = safeUrl(store.social && store.social.discord);
         dcStyle = store.discordStyle === 'a' || store.discordStyle === 'b' ? store.discordStyle : '';
-        renderAnnounce(store.announcement);
+        renderAnnounce(store.announcement, store.announcementSpeed);
       })
       .catch(() => {})
       .then(() => { loadDiscord(); setInterval(loadDiscord, REFRESH_MS); });

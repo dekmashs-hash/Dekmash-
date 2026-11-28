@@ -37,7 +37,12 @@
   font-size:15px; font-weight:500; line-height:1; color:var(--hc-tx); white-space:nowrap;
 }
 .hc-ann-lab svg{ width:20px; height:20px; flex-shrink:0; color:var(--red,#ff0001); }
-.hc-ann-win{ flex:1; min-width:0; overflow:hidden; display:flex; align-items:center; }
+.hc-ann-win{
+  flex:1; min-width:0; overflow:hidden; display:flex; align-items:center;
+  /* ขอบซ้าย/ขวาเบลอจางหาย — ข้อความไม่โดนตัดขาดตรงเส้นกั้นหลังคำว่า "ປະກາດ" */
+  -webkit-mask-image:linear-gradient(90deg, transparent 0, rgba(0,0,0,.35) 8px, #000 30px, #000 calc(100% - 30px), rgba(0,0,0,.35) calc(100% - 8px), transparent 100%);
+  mask-image:linear-gradient(90deg, transparent 0, rgba(0,0,0,.35) 8px, #000 30px, #000 calc(100% - 30px), rgba(0,0,0,.35) calc(100% - 8px), transparent 100%);
+}
 .hc-ann-track{
   display:flex; width:max-content; white-space:nowrap;
   animation:hcMarquee var(--hc-dur,14s) linear infinite;

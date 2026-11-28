@@ -156,3 +156,12 @@ body.ss{ font-family:'Noto Sans Thai Looped','Noto Sans Lao',system-ui,sans-seri
 .ss-stats.edit .ss-stat-in{ border-bottom:1px dashed #6b1d15; color:#fff; }
 .ss-stats.edit .ss-stat-in:focus{ border-bottom-color:#ff7a66; }
 .ss-stat-val em{ font-style:normal; font-size:11px; color:#9a9aa1; white-space:nowrap; }
+
+/* ข้อความประกาศ */
+.ss-ann-body{ padding-top:0; }
+#ssAnnText{
+  width:100%; min-height:72px; border-radius:16px; background:#000; border:1px solid #2a2a2a; color:#fff; padding:12px 16px;
+  font:inherit; font-size:15.5px; line-height:1.5; resize:vertical; box-sizing:border-box; transition:border-color .25s, box-shadow .25s;
+}
+#ssAnnText:focus{ outline:none; border-color:#8f241b; box-shadow:0 0 0 3px rgba(192,40,27,.18); }
+.ss-ann-hint{ color:#7d7d85; font-size:12px; }
