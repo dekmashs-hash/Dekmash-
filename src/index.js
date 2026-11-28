@@ -124,6 +124,10 @@ async function route(request, env, ctx) {
     if (url.pathname === '/api/admin/site-settings') {
       return handleSiteSettings(request, env);
     }
+    // ส่งรูปโลโก้ (ต้นฉบับ/ปัจจุบัน) ให้หน้าตั้งค่าผ่านโดเมนเดียวกัน — กัน CORS ทำให้ปรับขนาดไม่ได้
+    if (url.pathname === '/api/admin/site-logo') {
+      return handleSiteLogo(request, env, url);
+    }
 
     // webhook จาก topup.com.la (ผลออเดอร์) — ตอนนี้แค่รับ + log ไม่แตะเงิน/ออเดอร์ใดๆ
     if (url.pathname === '/webhook/topup') {
@@ -4086,22 +4090,32 @@ async function handleSiteSettings(request, env) {
   try {
     // โลโก้ร้าน: รับ data URL (PNG/WEBP/JPEG ที่ย่อ+ปรับขนาดมาจากหน้าเว็บแล้ว) -> อัปโหลดเข้า bucket site-assets -> เก็บ URL ใน logo_url
     if (body && body.logo_data) {
-      const m = /^data:image\/(png|webp|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(String(body.logo_data));
-      if (!m) return json({ error: 'ไฟล์โลโก้ไม่ถูกต้อง' }, 400);
-      const bin = atob(m[2]);
-      if (bin.length > 1024 * 1024) return json({ error: 'ไฟล์โลโก้ใหญ่เกินไป' }, 413);
-      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-      const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
-      const path = `logo/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
       const base = env.SUPABASE_URL.replace(/\/$/, '');
-      const up = await fetch(`${base}/storage/v1/object/site-assets/${path}`, {
-        method: 'POST',
-        headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': `image/${m[1]}`, 'x-upsert': 'true' },
-        body: bytes,
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!up.ok) { console.error('logo upload failed', up.status, await up.text()); return json({ error: 'อัปโหลดโลโก้ไม่สำเร็จ' }, 502); }
-      patch.logo_url = `${base}/storage/v1/object/public/site-assets/${path}`;
+      const putImg = async (dataUrl, path, maxBytes) => {
+        const m = /^data:image\/(png|webp|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
+        if (!m) return { error: 'ไฟล์โลโก้ไม่ถูกต้อง', status: 400 };
+        const bin = atob(m[2]);
+        if (bin.length > maxBytes) return { error: 'ไฟล์โลโก้ใหญ่เกินไป', status: 413 };
+        const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+        const up = await fetch(`${base}/storage/v1/object/site-assets/${path}`, {
+          method: 'POST',
+          headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': `image/${m[1]}`, 'x-upsert': 'true' },
+          body: bytes,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!up.ok) { console.error('logo upload failed', up.status, await up.text()); return { error: 'อัปโหลดโลโก้ไม่สำเร็จ', status: 502 }; }
+        return { url: `${base}/storage/v1/object/public/site-assets/${path}` };
+      };
+      // ต้นฉบับ (ไม่ย่อ) เก็บไว้ที่ logo/original.png เพื่อให้กลับมาปรับขนาดภายหลังได้โดยภาพไม่เล็กลงสะสม
+      if (body.logo_orig) {
+        const o = await putImg(body.logo_orig, 'logo/original.png', 2 * 1024 * 1024);
+        if (o.error) return json({ error: o.error }, o.status);
+      }
+      const scale = Math.min(100, Math.max(30, Math.round(Number(body.logo_scale) || 100)));
+      // ใส่ค่าขนาดไว้ท้ายชื่อไฟล์ (_s65) หน้าตั้งค่าอ่านกลับมาตั้งแถบเลื่อนได้
+      const r1 = await putImg(body.logo_data, `logo/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_s${scale}.png`, 1024 * 1024);
+      if (r1.error) return json({ error: r1.error }, r1.status);
+      patch.logo_url = r1.url;
     }
     if (!Object.keys(patch).length) return json({ error: 'ไม่มีข้อมูลให้บันทึก' }, 400);
     patch.updated_at = new Date().toISOString();
@@ -4111,6 +4125,33 @@ async function handleSiteSettings(request, env) {
   } catch (err) {
     console.error('handleSiteSettings failed:', err);
     return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
+  }
+}
+
+/* ---------- GET /api/admin/site-logo?which=original|current ---------- */
+async function handleSiteLogo(request, env, url) {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const admin = await getSessionUser(request, env);
+  if (!admin || !admin.isAdmin) return json({ error: 'ไม่มีสิทธิ์เข้าถึง' }, 403);
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: 'Worker ยังไม่ได้ตั้งค่า SUPABASE' }, 500);
+  const base = env.SUPABASE_URL.replace(/\/$/, '');
+  let target = `${base}/storage/v1/object/public/site-assets/logo/original.png`;
+  try {
+    if (url.searchParams.get('which') === 'current') {
+      const r = await sbRaw(env, 'GET', 'site_settings?id=eq.1&select=logo_url&limit=1');
+      const u = r.ok && Array.isArray(r.data) && r.data[0] ? String(r.data[0].logo_url || '') : '';
+      // รับเฉพาะรูปใน bucket site-assets ของโปรเจกต์นี้ (กันถูกใช้ดึงลิงก์ภายนอก)
+      if (!u.startsWith(`${base}/storage/v1/object/public/site-assets/`)) return json({ error: 'ไม่มีโลโก้' }, 404);
+      target = u;
+    }
+    const res = await fetch(target, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return json({ error: 'ไม่พบรูป' }, 404);
+    const ct = res.headers.get('content-type') || 'image/png';
+    if (!/^image\//.test(ct)) return json({ error: 'ไม่พบรูป' }, 404);
+    return new Response(res.body, { status: 200, headers: { 'content-type': ct, 'cache-control': 'no-store' } });
+  } catch (err) {
+    console.error('handleSiteLogo failed:', err);
+    return json({ error: 'เกิดข้อผิดพลาด' }, 502);
   }
 }
 
