@@ -2101,7 +2101,7 @@ async function handlePublicStorefront(request, env, opts) {
       ...Array.from({ length: CATEGORY_SLOT_COUNT }, (_, i) => `category_${i + 1}_enabled`),
     ];
 
-    const [settingsRows, products, durations, userCount, totalSold, soldCountsByName, promoData] = await Promise.all([
+    const [settingsRows, products, durations, userCount, totalSold, soldCountsByName, promoData, speedRes] = await Promise.all([
       supabaseSelect(env, 'site_settings', {
         select: siteSettingsColumns.join(','),
         id: 'eq.1',
@@ -2122,6 +2122,8 @@ async function handlePublicStorefront(request, env, opts) {
       // opts.raw = หน้าแอดมินขอแค่ 4 ตัวเลขสถิติ -> ข้าม 2 อย่างนี้ (ไล่นับออเดอร์ทีละ 1000 แถว + โปรโมชั่น) ซึ่งช้ามาก
       (opts && opts.raw) ? Promise.resolve(new Map()) : getSoldCountsByProductName(env),
       (opts && opts.raw) ? Promise.resolve({ list: [], byProduct: new Map() }) : getActivePromotions(env),
+      // ความเร็วแถบประกาศ (คอลัมน์ announcement_speed) — แยกดึงแบบไม่ throw: ถ้ายังไม่ได้เพิ่มคอลัมน์ใน Supabase หน้าร้านต้องไม่พัง
+      (opts && opts.raw) ? Promise.resolve(null) : sbRaw(env, 'GET', 'site_settings?id=eq.1&select=announcement_speed&limit=1').catch(() => null),
     ]);
 
     const settings = settingsRows[0] || {};
@@ -2219,6 +2221,7 @@ async function handlePublicStorefront(request, env, opts) {
         name: settings.store_name || null,
         tagline: settings.tagline || null,
         announcement: settings.announcement_text || null,
+        announcementSpeed: (speedRes && speedRes.ok && Array.isArray(speedRes.data) && speedRes.data[0] && Number(speedRes.data[0].announcement_speed)) || null,
         heroImage: settings.hero_image || null,
         logoUrl: settings.logo_url || null,
         discordStyle: ['a', 'b'].includes(settings.discord_card_style) ? settings.discord_card_style : 'classic',
@@ -4104,6 +4107,16 @@ async function handleSiteSettings(request, env) {
     if (!['classic', 'a', 'b'].includes(ds)) return json({ error: 'รูปแบบการ์ด Discord ไม่ถูกต้อง' }, 400);
     patch.discord_card_style = ds;
   }
+  if (body && body.announcement_text !== undefined) {
+    const t = String(body.announcement_text == null ? '' : body.announcement_text).replace(/\s+/g, ' ').trim();
+    if (t.length > 300) return json({ error: 'ข้อความประกาศยาวเกิน 300 ตัวอักษร' }, 400);
+    patch.announcement_text = t || null;
+  }
+  if (body && body.announcement_speed !== undefined) {
+    const sp = Math.round(Number(body.announcement_speed));
+    if (!Number.isFinite(sp) || sp < 10 || sp > 120) return json({ error: 'ความเร็วประกาศต้องอยู่ระหว่าง 10–120' }, 400);
+    patch.announcement_speed = sp;
+  }
   if (body && body.stats_fake_enabled !== undefined) patch.stats_fake_enabled = body.stats_fake_enabled === true;
   if (body && body.stats_fake && typeof body.stats_fake === 'object') {
     const map = { users: 'stats_fake_users', products: 'stats_fake_products', stock: 'stats_fake_stock', sold: 'stats_fake_sold' };
@@ -4152,9 +4165,15 @@ async function handleSiteSettings(request, env) {
     }
     if (!Object.keys(patch).length) return json({ error: 'ไม่มีข้อมูลให้บันทึก' }, 400);
     patch.updated_at = new Date().toISOString();
-    const r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', patch, { Prefer: 'return=minimal' });
+    let r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', patch, { Prefer: 'return=minimal' });
+    // ยังไม่ได้เพิ่มคอลัมน์ announcement_speed ใน Supabase -> บันทึกส่วนอื่นต่อให้ แล้วแจ้งกลับไปให้หน้าเว็บบอกผู้ใช้
+    let speedMissing = false;
+    if (!r.ok && patch.announcement_speed !== undefined && /announcement_speed/.test(String(r.text || ''))) {
+      delete patch.announcement_speed; speedMissing = true;
+      r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', patch, { Prefer: 'return=minimal' });
+    }
     if (!r.ok) { console.error('site-settings patch failed', r.status, r.text); return json({ error: 'บันทึกไม่สำเร็จ' }, 502); }
-    return json({ ok: true, store_name: patch.store_name, logo_url: patch.logo_url || null, discord_style: patch.discord_card_style || null });
+    return json({ ok: true, speed_missing: speedMissing, store_name: patch.store_name, logo_url: patch.logo_url || null, discord_style: patch.discord_card_style || null });
   } catch (err) {
     console.error('handleSiteSettings failed:', err);
     return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
@@ -4233,9 +4252,10 @@ async function handleShopStats(request, env) {
   try {
     // ?lite=1 (หน้าตั้งค่าเว็บไซต์) ไม่ต้องใช้ตัวเลขสถิติ -> ข้าม RPC admin_shop_stats ที่หนัก
     const lite = new URL(request.url).searchParams.get('lite') === '1';
-    const [st, set] = await Promise.all([
+    const [st, set, spd] = await Promise.all([
       lite ? Promise.resolve({ ok: true, data: null }) : sbRaw(env, 'POST', 'rpc/admin_shop_stats', {}),
-      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url,discord_card_style,hero_image&limit=1'),
+      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url,discord_card_style,hero_image,announcement_text&limit=1'),
+      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=announcement_speed&limit=1').catch(() => null),
     ]);
     if (!st.ok) { console.error('admin_shop_stats failed', st.status, st.text); return json({ error: 'ດຶງສະຖິຕິບໍ່ສຳເລັດ' }, 502); }
     const s0 = set.ok && Array.isArray(set.data) && set.data[0] ? set.data[0] : {};
@@ -4244,7 +4264,7 @@ async function handleShopStats(request, env) {
     return json({
       ok: true,
       stats: st.data,
-      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null, banner: s0.hero_image || null, discord_style: ['a', 'b'].includes(s0.discord_card_style) ? s0.discord_card_style : 'classic' },
+      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null, banner: s0.hero_image || null, announcement: s0.announcement_text || '', announcement_speed: (spd && spd.ok && Array.isArray(spd.data) && spd.data[0] && Number(spd.data[0].announcement_speed)) || null, discord_style: ['a', 'b'].includes(s0.discord_card_style) ? s0.discord_card_style : 'classic' },
       rental: { expires_at: Number.isFinite(exp) ? new Date(exp).toISOString() : null, renew_url: renew },
       admin: { name: String(admin.username || admin.email || 'A') },
     });
