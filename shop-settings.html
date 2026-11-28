@@ -125,6 +125,29 @@
       </div>
     </div>
   </section>
+  <section class="ss-card" id="ssPanel-basic2" role="tabpanel">
+    <div class="ss-card-body ss-logo-body">
+      <div class="ss-field">
+        <label id="ssLogoLbl">โลโก้ร้าน</label>
+        <div class="ss-logo-row">
+          <div class="ss-logo-box" id="ssLogoBox" role="button" tabindex="0" aria-labelledby="ssLogoLbl">
+            <span class="ss-logo-ph">+</span>
+            <img id="ssLogoImg" alt="" hidden/>
+          </div>
+          <div class="ss-logo-ctl">
+            <button class="ss-upload" id="ssLogoUpload" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>เลือกโลโก้</span></button>
+            <div class="ss-range-top"><span>ขนาดโลโก้</span><b id="ssLogoPct">100%</b></div>
+            <div class="ss-range-wrap" id="ssRangeWrap"><i class="ss-pika" id="ssPika" aria-hidden="true"></i><input id="ssLogoRange" class="ss-range" type="range" min="30" max="100" step="1" value="100" disabled aria-label="ปรับขนาดโลโก้"/></div>
+          </div>
+        </div>
+        <input id="ssLogoFile" type="file" accept="image/*" hidden/>
+        <div class="ss-prev" aria-label="ตัวอย่างโลโก้">
+          <div class="ss-prev-bar"><span class="ss-prev-logo"><img id="ssPrevImg" alt="" hidden/><i id="ssPrevTxt">D</i></span><span class="ss-prev-name" id="ssPrevName">DEK MASH</span></div>
+          <span class="ss-prev-cap">ภาพจำลองบนหัวเว็บ</span>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <section class="ss-card" id="ssPanel-font" role="tabpanel" hidden>
     <div class="ss-card-head"><span class="ss-card-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20 12 4l8 16M7.500 14h9"/></svg></span><h3>ฟอนต์เว็บไซต์</h3></div>

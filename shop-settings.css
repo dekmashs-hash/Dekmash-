@@ -81,3 +81,36 @@ body.ss{ font-family:'Noto Sans Thai Looped','Noto Sans Lao',system-ui,sans-seri
   .ss-tab{ height:42px; font-size:16px; }
 }
 @media (prefers-reduced-motion:reduce){ .ss-card,.ss-toast,.ss-tab{ animation:none; transition:none; } }
+
+/* ---------- โลโก้ร้าน + แถบปรับขนาด + ภาพจำลอง ---------- */
+.ss-logo-body{ padding-top:0; }
+.ss-logo-row{ display:flex; gap:14px; align-items:stretch; }
+.ss-logo-box{ position:relative; flex:0 0 104px; width:104px; height:104px; border-radius:16px; border:1.5px dashed #2c2c2c; background:#000; display:grid; place-items:center; overflow:hidden; cursor:pointer; }
+.ss-logo-ph{ font-size:32px; line-height:1; color:#c0281b; }
+.ss-logo-box img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+.ss-logo-box.has .ss-logo-ph{ display:none; }
+.ss-logo-ctl{ flex:1; min-width:0; display:flex; flex-direction:column; justify-content:space-between; }
+.ss-logo-ctl .ss-upload{ margin-top:0; align-self:flex-start; }
+.ss-range-top{ display:flex; justify-content:space-between; font-size:13px; color:#a9a9b0; margin-top:10px; }
+.ss-range-top b{ color:#d3392a; font-weight:600; }
+.ss-range-wrap{ position:relative; height:62px; margin-top:2px; }
+.ss-range{ -webkit-appearance:none; appearance:none; position:absolute; left:0; right:0; bottom:8px; width:100%; height:6px; border-radius:6px; background:#1d1d1d; outline:none; margin:0; touch-action:none; }
+.ss-range::-webkit-slider-thumb{ -webkit-appearance:none; width:64px; height:52px; background:transparent; border:0; cursor:grab; }
+.ss-range::-moz-range-thumb{ width:64px; height:52px; background:transparent; border:0; cursor:grab; }
+.ss-range:disabled{ opacity:.45; }
+.ss-pika{ position:absolute; bottom:11px; left:0; width:64px; height:46px; pointer-events:none; will-change:transform;
+  background:url(assets/pika-run.webp) -64px 0/256px 46px no-repeat; 
+  filter:drop-shadow(0 0 8px rgba(255,0,1,.35)); transform-origin:50% 100%; }
+.ss-pika.idle{ animation:ss-pika-idle 2.4s ease-in-out infinite; }
+.ss-pika.run{ animation:ss-pika-run .28s steps(4) infinite; }
+.ss-pika.flip{ transform:scaleX(-1); }
+@keyframes ss-pika-run{ from{ background-position:0 0; } to{ background-position:-256px 0; } }
+@keyframes ss-pika-idle{ 0%,100%{ background-position:-64px 0; margin-bottom:0; } 50%{ background-position:-64px 0; margin-bottom:1.5px; } }
+@media (prefers-reduced-motion:reduce){ .ss-pika.run,.ss-pika.idle{ animation:none; } }
+.ss-prev{ margin-top:16px; border-radius:16px; border:1px solid #1f1f1f; background:#0a0a0a; padding:12px 14px 8px; }
+.ss-prev-bar{ display:flex; align-items:center; gap:11px; }
+.ss-prev-logo{ width:42px; height:42px; border-radius:12px; background:#000; border:1px solid #2a0d0a; display:grid; place-items:center; overflow:hidden; flex:0 0 auto; }
+.ss-prev-logo img{ width:100%; height:100%; object-fit:contain; }
+.ss-prev-logo i{ font-style:normal; font-weight:700; color:#d3392a; }
+.ss-prev-name{ font-size:15px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ss-prev-cap{ display:block; margin-top:8px; font-size:11.5px; color:#6f6f76; }

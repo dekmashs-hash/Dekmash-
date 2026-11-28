@@ -5,6 +5,7 @@
   var TH_M = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var rental = { expires_at: null, renew_url: null };
   var shopName = '';
+  var logoSrc = null, logoImg = null, logoDirty = false, logoSaved = '';
 
   function setTxt(id, t) { var el = $(id); if (el) el.textContent = t; }
   function toast(msg) {
@@ -60,6 +61,7 @@
           var box = $('spLogo'); box.textContent = '';
           var img = new Image(); img.alt = ''; img.src = logo; box.appendChild(img);
         } else { setTxt('spLogoTxt', (shopName || 'D').charAt(0).toUpperCase()); }
+        if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; refreshLogo(); }
         setTxt('spAvatar', String((j.admin && j.admin.name) || 'A').charAt(0).toUpperCase());
         rental = j.rental || rental;
         renderRental();
@@ -108,8 +110,57 @@
       t.addEventListener('click', function () {
         tabs.forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); });
         ['basic', 'font', 'notice', 'more'].forEach(function (k) { $('ssPanel-' + k).hidden = k !== t.getAttribute('data-tab'); });
+        $('ssPanel-basic2').hidden = t.getAttribute('data-tab') !== 'basic';
         t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       });
+    });
+  }
+
+  /* ---------- โลโก้: เลือกรูป + ปรับขนาด + พรีวิว ---------- */
+  /* ปิกาจูแดงบนแถบเลื่อน: ยืนนิ่ง (หายใจเบาๆ) ตอนไม่ได้ลาก — วิ่งตอนลาก หันตามทิศที่เลื่อน */
+  var pikaT = 0, lastPct = 100;
+  function placePika() {
+    var r = $('ssLogoRange'), pk = $('ssPika'), w = $('ssRangeWrap');
+    var ratio = (r.value - r.min) / (r.max - r.min);
+    pk.style.left = ratio * (w.clientWidth - 64) + 'px';
+  }
+  function pikaRun(pct) {
+    var pk = $('ssPika');
+    if (pct !== lastPct) pk.classList.toggle('flip', pct < lastPct);
+    lastPct = pct;
+    pk.classList.remove('idle'); pk.classList.add('run');
+    clearTimeout(pikaT);
+    pikaT = setTimeout(function () { pk.classList.remove('run'); pk.classList.add('idle'); }, 220);
+  }
+  function drawLogo(pct) {
+    var c = document.createElement('canvas'); c.width = c.height = 256;
+    var g = c.getContext('2d'), k = 256 * pct / 100, w = logoImg.naturalWidth, h = logoImg.naturalHeight, r = Math.min(k / w, k / h);
+    g.drawImage(logoImg, (256 - w * r) / 2, (256 - h * r) / 2, w * r, h * r);
+    return c.toDataURL('image/png');
+  }
+  function refreshLogo() {
+    var pct = +$('ssLogoRange').value; $('ssLogoPct').textContent = pct + '%'; placePika();
+    var url = logoImg ? drawLogo(pct) : (logoSaved || '');
+    ['ssLogoImg', 'ssPrevImg'].forEach(function (id) { var im = $(id); if (url) { im.src = url; im.hidden = false; } else { im.hidden = true; } });
+    $('ssLogoBox').classList.toggle('has', !!url); $('ssPrevTxt').hidden = !!url;
+    $('ssPrevName').textContent = ($('ssName').value.trim() || shopName || 'DEK MASH');
+  }
+  function initLogo() {
+    var pick = function () { $('ssLogoFile').click(); };
+    $('ssLogoBox').addEventListener('click', pick);
+    $('ssLogoBox').addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+    $('ssLogoUpload').addEventListener('click', pick);
+    $('ssLogoRange').addEventListener('input', function () { logoDirty = true; pikaRun(+this.value); refreshLogo(); });
+    $('ssPika').classList.add('idle'); placePika(); window.addEventListener('resize', placePika);
+    $('ssName').addEventListener('input', refreshLogo);
+    $('ssLogoFile').addEventListener('change', function () {
+      var f = this.files && this.files[0]; this.value = '';
+      if (!f) return;
+      if (!/^image\//.test(f.type)) { toast('กรุณาเลือกไฟล์รูปภาพ'); return; }
+      var u = URL.createObjectURL(f), im = new Image();
+      im.onload = function () { logoImg = im; logoDirty = true; $('ssLogoRange').disabled = false; $('ssLogoRange').value = 100; refreshLogo(); };
+      im.onerror = function () { toast('เปิดไฟล์รูปไม่ได้'); };
+      im.src = u;
     });
   }
 
@@ -128,10 +179,14 @@
       var btn = this, name = $('ssName').value.trim();
       if (!name) { toast('กรุณากรอกชื่อเว็บไซต์'); $('ssName').focus(); return; }
       btn.disabled = true;
-      fetch('/api/admin/site-settings', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ store_name: name }) })
+      var payload = { store_name: name };
+      if (logoImg && logoDirty) payload.logo_data = drawLogo(+$('ssLogoRange').value);
+      fetch('/api/admin/site-settings', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (x) {
           if (!x.ok || !x.j || !x.j.ok) throw new Error((x.j && x.j.error) || 'บันทึกไม่สำเร็จ');
+          if (x.j.logo_url) { logoSaved = x.j.logo_url; logoImg = null; logoDirty = false; $('ssLogoRange').disabled = true; $('ssLogoRange').value = 100; refreshLogo();
+            var lb = $('spLogo'); lb.textContent = ''; var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
           shopName = name; setTxt('spName', name); delete $('ssName').dataset.dirty; renderRental();
           toast('บันทึกการตั้งค่าแล้ว');
         })
@@ -145,7 +200,7 @@
     });
   }
 
-  initMenu(); initTabs(); initForm();
+  initMenu(); initTabs(); initForm(); initLogo();
   fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
     if (!j || !j.loggedIn || !j.user || !j.user.isAdmin) { location.replace('index.html'); return; }
     load();
