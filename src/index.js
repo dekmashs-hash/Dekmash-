@@ -2083,7 +2083,7 @@ async function handlePublicStorefront(request, env) {
 
   try {
     const siteSettingsColumns = [
-      'store_name', 'tagline', 'announcement_text', 'hero_image', 'logo_url',
+      'store_name', 'tagline', 'announcement_text', 'hero_image', 'logo_url', 'discord_card_style',
       'qr_label', 'qr_label_2', 'qr_url', 'qr_url_2',
       'qr_label_3', 'qr_url_3', 'qr_label_4', 'qr_url_4',
       ...[1, 2, 3, 4].flatMap((n) => [`qr_sub_${n}`, `qr_badge_${n}`, `qr_icon_${n}`, `qr_auto_${n}`]),
@@ -2216,6 +2216,7 @@ async function handlePublicStorefront(request, env) {
         announcement: settings.announcement_text || null,
         heroImage: settings.hero_image || null,
         logoUrl: settings.logo_url || null,
+        discordStyle: ['a', 'b'].includes(settings.discord_card_style) ? settings.discord_card_style : 'classic',
         qrLabel1: settings.qr_label || null,
         qrLabel2: settings.qr_label_2 || null,
         qrUrl1: settings.qr_url || null,
@@ -4087,6 +4088,11 @@ async function handleSiteSettings(request, env) {
     if (!name || name.length > 60) return json({ error: 'ชื่อเว็บไซต์ต้องมี 1–60 ตัวอักษร' }, 400);
     patch.store_name = name;
   }
+  if (body && body.discord_style !== undefined) {
+    const ds = String(body.discord_style);
+    if (!['classic', 'a', 'b'].includes(ds)) return json({ error: 'รูปแบบการ์ด Discord ไม่ถูกต้อง' }, 400);
+    patch.discord_card_style = ds;
+  }
   try {
     // โลโก้ร้าน: รับ data URL (PNG/WEBP/JPEG ที่ย่อ+ปรับขนาดมาจากหน้าเว็บแล้ว) -> อัปโหลดเข้า bucket site-assets -> เก็บ URL ใน logo_url
     if (body && body.logo_data) {
@@ -4121,7 +4127,7 @@ async function handleSiteSettings(request, env) {
     patch.updated_at = new Date().toISOString();
     const r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', patch, { Prefer: 'return=minimal' });
     if (!r.ok) { console.error('site-settings patch failed', r.status, r.text); return json({ error: 'บันทึกไม่สำเร็จ' }, 502); }
-    return json({ ok: true, store_name: patch.store_name, logo_url: patch.logo_url || null });
+    return json({ ok: true, store_name: patch.store_name, logo_url: patch.logo_url || null, discord_style: patch.discord_card_style || null });
   } catch (err) {
     console.error('handleSiteSettings failed:', err);
     return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
@@ -4166,7 +4172,7 @@ async function handleShopStats(request, env) {
   try {
     const [st, set] = await Promise.all([
       sbRaw(env, 'POST', 'rpc/admin_shop_stats', {}),
-      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url&limit=1'),
+      sbRaw(env, 'GET', 'site_settings?id=eq.1&select=store_name,logo_url,discord_card_style&limit=1'),
     ]);
     if (!st.ok) { console.error('admin_shop_stats failed', st.status, st.text); return json({ error: 'ດຶງສະຖິຕິບໍ່ສຳເລັດ' }, 502); }
     const s0 = set.ok && Array.isArray(set.data) && set.data[0] ? set.data[0] : {};
@@ -4175,7 +4181,7 @@ async function handleShopStats(request, env) {
     return json({
       ok: true,
       stats: st.data,
-      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null },
+      shop: { name: s0.store_name || 'DEK MASH', logo: s0.logo_url || null, discord_style: ['a', 'b'].includes(s0.discord_card_style) ? s0.discord_card_style : 'classic' },
       rental: { expires_at: Number.isFinite(exp) ? new Date(exp).toISOString() : null, renew_url: renew },
       admin: { name: String(admin.username || admin.email || 'A') },
     });
