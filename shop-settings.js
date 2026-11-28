@@ -150,7 +150,16 @@
     $('ssLogoBox').addEventListener('click', pick);
     $('ssLogoBox').addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
     $('ssLogoUpload').addEventListener('click', pick);
-    $('ssLogoRange').addEventListener('input', function () { logoDirty = true; pikaRun(+this.value); refreshLogo(); });
+    $('ssLogoRange').addEventListener('input', function () {
+      pikaRun(+this.value);
+      if (!logoImg && logoSaved) { // ยังไม่ได้เลือกไฟล์ใหม่ -> ใช้โลโก้ที่บันทึกไว้เป็นต้นฉบับ
+        var im = new Image(), self = this; im.crossOrigin = 'anonymous';
+        im.onload = function () { logoImg = im; logoDirty = true; refreshLogo(); };
+        im.onerror = function () { toast('ปรับขนาดโลโก้เดิมไม่ได้ — กรุณาเลือกไฟล์ใหม่'); self.value = 100; };
+        im.src = logoSaved; return;
+      }
+      logoDirty = true; refreshLogo();
+    });
     $('ssPika').classList.add('idle'); placePika(); window.addEventListener('resize', placePika);
     $('ssName').addEventListener('input', refreshLogo);
     $('ssLogoFile').addEventListener('change', function () {
@@ -185,7 +194,7 @@
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (x) {
           if (!x.ok || !x.j || !x.j.ok) throw new Error((x.j && x.j.error) || 'บันทึกไม่สำเร็จ');
-          if (x.j.logo_url) { logoSaved = x.j.logo_url; logoImg = null; logoDirty = false; $('ssLogoRange').disabled = true; $('ssLogoRange').value = 100; refreshLogo();
+          if (x.j.logo_url) { logoSaved = x.j.logo_url; logoImg = null; logoDirty = false; $('ssLogoRange').value = 100; refreshLogo();
             var lb = $('spLogo'); lb.textContent = ''; var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
           shopName = name; setTxt('spName', name); delete $('ssName').dataset.dirty; renderRental();
           toast('บันทึกการตั้งค่าแล้ว');
