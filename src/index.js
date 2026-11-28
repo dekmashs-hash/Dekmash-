@@ -4116,7 +4116,7 @@ async function handleSiteSettings(request, env) {
   if (body && body.announcement_enabled !== undefined) patch.announcement_enabled = body.announcement_enabled === true;
   if (body && body.announcement_speed !== undefined) {
     const sp = Math.round(Number(body.announcement_speed));
-    if (!Number.isFinite(sp) || sp < 10 || sp > 120) return json({ error: 'ความเร็วประกาศต้องอยู่ระหว่าง 10–120' }, 400);
+    if (!Number.isFinite(sp) || sp < 10 || sp > 300) return json({ error: 'ความเร็วประกาศต้องอยู่ระหว่าง 10–300' }, 400);
     patch.announcement_speed = sp;
   }
   if (body && body.stats_fake_enabled !== undefined) patch.stats_fake_enabled = body.stats_fake_enabled === true;
