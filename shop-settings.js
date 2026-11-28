@@ -3,6 +3,7 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var TH_M = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+  var stDoneRes = function () {};
   var rental = { expires_at: null, renew_url: null };
   var shopName = '';
   var logoSrc = null, logoImg = null, logoDirty = false, logoSaved = '';
@@ -45,7 +46,7 @@
   function showErr(msg) { var el = $('spErr'); el.textContent = msg; el.hidden = false; }
 
   function load() {
-    return fetch('/api/admin/shop-stats', { credentials: 'same-origin', cache: 'no-store' })
+    return fetch('/api/admin/shop-stats?lite=1', { credentials: 'same-origin', cache: 'no-store' })
       .then(function (r) {
         if (r.status === 401 || r.status === 403) { location.replace('index.html'); throw new Error('forbidden'); }
         return r.json();
@@ -61,7 +62,7 @@
           var box = $('spLogo'); box.textContent = ''; box.classList.add('has-img');
           var img = new Image(); img.alt = ''; img.src = logo; box.appendChild(img);
         } else { setTxt('spLogoTxt', (shopName || 'D').charAt(0).toUpperCase()); }
-        if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; preloadSaved(logoSaved); refreshLogo(); }
+        if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; refreshLogo(); var sv = logoSaved; stDone.then(function () { if (logoSaved === sv && !logoDirty) preloadSaved(sv); }); }
         setTxt('spAvatar', String((j.admin && j.admin.name) || 'A').charAt(0).toUpperCase());
         if (!dcLoaded) { dcStyle = (j.shop && j.shop.discord_style) || 'classic'; dcLoaded = true; renderDc(); }
         rental = j.rental || rental;
@@ -248,6 +249,7 @@
   }
 
   /* ---------- สถิติหน้าแรก: สวิตช์ ตัวเลขจำลอง (เปิด = แก้เลขเองได้ / ปิด = ใช้เลขจริง) ---------- */
+  var stDone = new Promise(function (res) { stDoneRes = res; });
   var stState = { enabled: false, real: { users: 0, products: 0, stock: 0, sold: 0 }, fake: { users: 0, products: 0, stock: 0, sold: 0 }, loaded: false };
   var ST_KEYS = ['users', 'products', 'stock', 'sold'];
   function fmtN(n) { return Number(n || 0).toLocaleString('en-US'); }
@@ -279,10 +281,13 @@
     });
   }
   function loadSt() {
-    return fetch('/api/admin/home-stats', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    return fetch('/api/admin/home-stats', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+      if (r.status === 401 || r.status === 403) { location.replace('index.html'); throw 0; }
+      return r.json();
+    }).then(function (j) {
       if (!j || !j.ok) throw 0;
       stState.enabled = !!j.enabled; stState.real = j.real; stState.fake = j.fake; stState.loaded = true; renderSt();
-    }).catch(function () { setTxt('ssStHint', 'โหลดตัวเลขไม่สำเร็จ — รีเฟรชหน้านี้'); });
+    }).catch(function () { setTxt('ssStHint', 'โหลดตัวเลขไม่สำเร็จ — รีเฟรชหน้านี้'); }).then(stDoneRes);
   }
 
   /* ---------- ฟอร์ม ---------- */
@@ -327,9 +332,7 @@
   }
 
   initMenu(); initTabs(); initForm(); initLogo(); initDc(); initSt();
-  fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-    if (!j || !j.loggedIn || !j.user || !j.user.isAdmin) { location.replace('index.html'); return; }
-    load(); loadSt();
-  }).catch(function () { location.replace('index.html'); });
+  // เรียกพร้อมกันเลย (เดิมรอ /api/me ก่อนแล้วค่อยเรียกทีละตัว = ช้า) — 2 endpoint นี้ตรวจสิทธิ์แอดมินที่ฝั่ง Worker เอง และเด้งออกถ้า 401/403
+  load(); loadSt();
   setInterval(renderRental, 30000);
 })();
