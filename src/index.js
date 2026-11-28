@@ -4077,12 +4077,37 @@ async function handleSiteSettings(request, env) {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: 'Worker ยังไม่ได้ตั้งค่า SUPABASE' }, 500);
   let body = null;
   try { body = await request.json(); } catch { return json({ error: 'ข้อมูลไม่ถูกต้อง' }, 400); }
-  const name = String((body && body.store_name) || '').trim();
-  if (!name || name.length > 60) return json({ error: 'ชื่อเว็บไซต์ต้องมี 1–60 ตัวอักษร' }, 400);
+  const patch = {};
+  if (body && body.store_name !== undefined) {
+    const name = String(body.store_name || '').trim();
+    if (!name || name.length > 60) return json({ error: 'ชื่อเว็บไซต์ต้องมี 1–60 ตัวอักษร' }, 400);
+    patch.store_name = name;
+  }
   try {
-    const r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', { store_name: name }, { Prefer: 'return=minimal' });
+    // โลโก้ร้าน: รับ data URL (PNG/WEBP/JPEG ที่ย่อ+ปรับขนาดมาจากหน้าเว็บแล้ว) -> อัปโหลดเข้า bucket site-assets -> เก็บ URL ใน logo_url
+    if (body && body.logo_data) {
+      const m = /^data:image\/(png|webp|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(String(body.logo_data));
+      if (!m) return json({ error: 'ไฟล์โลโก้ไม่ถูกต้อง' }, 400);
+      const bin = atob(m[2]);
+      if (bin.length > 1024 * 1024) return json({ error: 'ไฟล์โลโก้ใหญ่เกินไป' }, 413);
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+      const path = `logo/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const base = env.SUPABASE_URL.replace(/\/$/, '');
+      const up = await fetch(`${base}/storage/v1/object/site-assets/${path}`, {
+        method: 'POST',
+        headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': `image/${m[1]}`, 'x-upsert': 'true' },
+        body: bytes,
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!up.ok) { console.error('logo upload failed', up.status, await up.text()); return json({ error: 'อัปโหลดโลโก้ไม่สำเร็จ' }, 502); }
+      patch.logo_url = `${base}/storage/v1/object/public/site-assets/${path}`;
+    }
+    if (!Object.keys(patch).length) return json({ error: 'ไม่มีข้อมูลให้บันทึก' }, 400);
+    patch.updated_at = new Date().toISOString();
+    const r = await sbRaw(env, 'PATCH', 'site_settings?id=eq.1', patch, { Prefer: 'return=minimal' });
     if (!r.ok) { console.error('site-settings patch failed', r.status, r.text); return json({ error: 'บันทึกไม่สำเร็จ' }, 502); }
-    return json({ ok: true, store_name: name });
+    return json({ ok: true, store_name: patch.store_name, logo_url: patch.logo_url || null });
   } catch (err) {
     console.error('handleSiteSettings failed:', err);
     return json({ error: 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง' }, 502);
