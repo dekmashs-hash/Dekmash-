@@ -61,7 +61,7 @@
           var box = $('spLogo'); box.textContent = '';
           var img = new Image(); img.alt = ''; img.src = logo; box.appendChild(img);
         } else { setTxt('spLogoTxt', (shopName || 'D').charAt(0).toUpperCase()); }
-        if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; refreshLogo(); }
+        if (!logoDirty) { logoSaved = (logo && /^(https:|\/)/.test(logo)) ? logo : ''; preloadSaved(logoSaved); refreshLogo(); }
         setTxt('spAvatar', String((j.admin && j.admin.name) || 'A').charAt(0).toUpperCase());
         rental = j.rental || rental;
         renderRental();
@@ -111,7 +111,7 @@
         tabs.forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); });
         ['basic', 'font', 'notice', 'more'].forEach(function (k) { $('ssPanel-' + k).hidden = k !== t.getAttribute('data-tab'); });
         $('ssPanel-basic2').hidden = t.getAttribute('data-tab') !== 'basic';
-        t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+        setTimeout(placePika, 0); t.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       });
     });
   }
@@ -122,7 +122,7 @@
   function placePika() {
     var r = $('ssLogoRange'), pk = $('ssPika'), w = $('ssRangeWrap');
     var ratio = (r.value - r.min) / (r.max - r.min);
-    pk.style.left = ratio * (w.clientWidth - 64) + 'px';
+    var W = w.clientWidth || w.getBoundingClientRect().width || 200; pk.style.left = Math.max(0, ratio * (W - 44)) + 'px';
   }
   function pikaRun(pct) {
     var pk = $('ssPika');
@@ -131,6 +131,13 @@
     pk.classList.remove('idle'); pk.classList.add('run');
     clearTimeout(pikaT);
     pikaT = setTimeout(function () { pk.classList.remove('run'); pk.classList.add('idle'); }, 220);
+  }
+  var baseImg = null;
+  function preloadSaved(url) {
+    baseImg = null; if (!url) return;
+    fetch(url, { mode: 'cors', cache: 'force-cache' }).then(function (r) { if (!r.ok) throw 0; return r.blob(); }).then(function (bl) {
+      var im = new Image(); im.onload = function () { if (logoSaved === url) baseImg = im; }; im.src = URL.createObjectURL(bl);
+    }).catch(function () {});
   }
   function drawLogo(pct) {
     var c = document.createElement('canvas'); c.width = c.height = 256;
@@ -152,13 +159,8 @@
     $('ssLogoUpload').addEventListener('click', pick);
     $('ssLogoRange').addEventListener('input', function () {
       pikaRun(+this.value);
-      if (!logoImg && logoSaved) { // ยังไม่ได้เลือกไฟล์ใหม่ -> ใช้โลโก้ที่บันทึกไว้เป็นต้นฉบับ
-        var im = new Image(), self = this; im.crossOrigin = 'anonymous';
-        im.onload = function () { logoImg = im; logoDirty = true; refreshLogo(); };
-        im.onerror = function () { toast('ปรับขนาดโลโก้เดิมไม่ได้ — กรุณาเลือกไฟล์ใหม่'); self.value = 100; };
-        im.src = logoSaved; return;
-      }
-      logoDirty = true; refreshLogo();
+      if (!logoImg && baseImg) { logoImg = baseImg; }   // ใช้โลโก้ที่บันทึกไว้เป็นต้นฉบับ (โหลดเตรียมไว้แล้ว)
+      logoDirty = !!logoImg; refreshLogo();
     });
     $('ssPika').classList.add('idle'); placePika(); window.addEventListener('resize', placePika);
     $('ssName').addEventListener('input', refreshLogo);
@@ -194,7 +196,7 @@
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (x) {
           if (!x.ok || !x.j || !x.j.ok) throw new Error((x.j && x.j.error) || 'บันทึกไม่สำเร็จ');
-          if (x.j.logo_url) { logoSaved = x.j.logo_url; logoImg = null; logoDirty = false; $('ssLogoRange').value = 100; refreshLogo();
+          if (x.j.logo_url) { logoSaved = x.j.logo_url; preloadSaved(logoSaved); logoImg = null; logoDirty = false; $('ssLogoRange').value = 100; refreshLogo();
             var lb = $('spLogo'); lb.textContent = ''; var li = new Image(); li.alt = ''; li.src = x.j.logo_url; lb.appendChild(li); }
           shopName = name; setTxt('spName', name); delete $('ssName').dataset.dirty; renderRental();
           toast('บันทึกการตั้งค่าแล้ว');
